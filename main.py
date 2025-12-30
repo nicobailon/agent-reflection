@@ -11,16 +11,18 @@
 Agent Reflection - Daily Self-Improvement Pipeline
 
 Analyzes coding agent sessions via CASS to extract patterns, anti-patterns,
-and wins for continuous improvement.
+and wins for continuous improvement. Also generates daily work logs.
 """
 
 import argparse
+import fnmatch
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -125,6 +127,29 @@ Respond with ONLY valid JSON (no markdown, no explanation):
 }}
 """
 
+WORKLOG_PROMPT_TEMPLATE = """Analyze the following coding session data and generate a concise work log summary.
+
+## Session Data
+{session_data}
+
+## Output Format
+Respond with ONLY valid JSON (no markdown, no explanation):
+{{
+  "projects": [
+    {{
+      "name": "project-name",
+      "accomplishments": ["Brief accomplishment 1", "Brief accomplishment 2"],
+      "files_touched": 5,
+      "estimated_minutes": 45
+    }}
+  ],
+  "highlights": ["Key highlight 1", "Key highlight 2"],
+  "total_estimated_minutes": 120
+}}
+
+Focus on meaningful accomplishments, not trivial changes. Be concise.
+"""
+
 
 @dataclass
 class Config:
@@ -148,6 +173,9 @@ class Config:
     sync_enabled: bool = True
     sync_sources: list[str] = field(default_factory=list)
     custom_categories: list[dict] = field(default_factory=list)
+    extra_dirs: list[Path] = field(default_factory=list)
+    extra_patterns: list[str] = field(default_factory=lambda: ["*.md", "*.txt"])
+    worklog_enabled: bool = True
 
     @classmethod
     def from_toml(cls, path: Path) -> "Config":
@@ -212,6 +240,18 @@ class Config:
             if "sync_sources" in s:
                 config.sync_sources = s["sync_sources"]
         
+        if "sources" in data:
+            s = data["sources"]
+            if "extra_dirs" in s:
+                config.extra_dirs = [Path(d).expanduser() for d in s["extra_dirs"]]
+            if "extra_patterns" in s:
+                config.extra_patterns = s["extra_patterns"]
+        
+        if "worklog" in data:
+            w = data["worklog"]
+            if "enabled" in w:
+                config.worklog_enabled = w["enabled"]
+        
         if "custom_categories" in data:
             config.custom_categories = data["custom_categories"]
         
@@ -224,10 +264,34 @@ class CategoryResult:
     display: str
     description: str
     cass_hits: list[dict]
+    doc_hits: list[dict] = field(default_factory=list)
     anti_patterns: list[dict] = field(default_factory=list)
     wins: list[dict] = field(default_factory=list)
     summary: str = ""
     error: str | None = None
+
+
+@dataclass
+class ProjectWork:
+    name: str
+    workspace: str
+    sessions: list[dict]
+    files_modified: set[str]
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    accomplishments: list[str] = field(default_factory=list)
+    estimated_minutes: int = 0
+
+
+@dataclass 
+class WorkLog:
+    date: str
+    projects: list[ProjectWork]
+    docs_created: list[dict]
+    docs_modified: list[dict]
+    highlights: list[str]
+    total_sessions: int
+    total_estimated_minutes: int
 
 
 def run_command(cmd: list[str], input_text: str | None = None) -> tuple[int, str, str]:
@@ -306,6 +370,48 @@ def build_cass_query(
     return cmd
 
 
+def search_extra_dirs(
+    query: str,
+    extra_dirs: list[Path],
+    patterns: list[str],
+    since: datetime | None,
+) -> list[dict]:
+    hits = []
+    query_lower = query.lower()
+    
+    for dir_path in extra_dirs:
+        if not dir_path.exists():
+            continue
+        
+        for pattern in patterns:
+            for file_path in dir_path.glob(pattern):
+                if not file_path.is_file():
+                    continue
+                
+                if since:
+                    mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
+                    if mtime < since:
+                        continue
+                
+                try:
+                    content = file_path.read_text(encoding="utf-8", errors="ignore")
+                    lines = content.split("\n")
+                    
+                    for i, line in enumerate(lines, 1):
+                        if query_lower in line.lower():
+                            hits.append({
+                                "source": "docs",
+                                "source_path": str(file_path),
+                                "line_number": i,
+                                "content": line.strip()[:200],
+                                "query": query,
+                            })
+                except (OSError, UnicodeDecodeError):
+                    pass
+    
+    return hits
+
+
 def search_category(
     category: dict,
     since: datetime | None,
@@ -316,8 +422,10 @@ def search_category(
     description = category.get("description", "")
     queries = category.get("queries", [])
     
-    all_hits = []
-    seen_paths = set()
+    all_cass_hits = []
+    all_doc_hits = []
+    seen_cass_paths = set()
+    seen_doc_paths = set()
     
     for query in queries:
         cmd = build_cass_query(
@@ -337,17 +445,26 @@ def search_category(
                     if config.workspace_exclude and any(excl in workspace for excl in config.workspace_exclude):
                         continue
                     path_key = f"{hit.get('source_path')}:{hit.get('line_number', 0)}"
-                    if path_key not in seen_paths:
-                        seen_paths.add(path_key)
-                        all_hits.append(hit)
+                    if path_key not in seen_cass_paths:
+                        seen_cass_paths.add(path_key)
+                        all_cass_hits.append(hit)
             except json.JSONDecodeError:
                 pass
+        
+        if config.extra_dirs:
+            doc_hits = search_extra_dirs(query, config.extra_dirs, config.extra_patterns, since)
+            for hit in doc_hits:
+                path_key = f"{hit['source_path']}:{hit['line_number']}"
+                if path_key not in seen_doc_paths:
+                    seen_doc_paths.add(path_key)
+                    all_doc_hits.append(hit)
     
     return CategoryResult(
         name=name,
         display=display,
         description=description,
-        cass_hits=all_hits,
+        cass_hits=all_cass_hits,
+        doc_hits=all_doc_hits,
     )
 
 
@@ -357,19 +474,26 @@ def analyze_with_llm(
     config: Config,
     dry_run: bool = False,
 ) -> CategoryResult:
-    if not result.cass_hits:
+    total_hits = len(result.cass_hits) + len(result.doc_hits)
+    
+    if total_hits == 0:
         result.summary = "No sessions found for this category"
         return result
     
     if dry_run:
-        result.summary = f"[DRY RUN] Would analyze {len(result.cass_hits)} hits"
+        result.summary = f"[DRY RUN] Would analyze {len(result.cass_hits)} CASS hits + {len(result.doc_hits)} doc hits"
         result.anti_patterns = [{"description": "[DRY RUN] Skipped", "severity": "low", "occurrences": 0}]
         return result
+    
+    combined_data = {
+        "cass_sessions": result.cass_hits,
+        "documentation": result.doc_hits,
+    }
     
     prompt = prompt_template.format(
         category_name=result.display,
         category_description=result.description,
-        cass_results=json.dumps(result.cass_hits, indent=2),
+        cass_results=json.dumps(combined_data, indent=2),
     )
     
     llm_cmd = [config.llm_method, "-p", prompt]
@@ -402,6 +526,267 @@ def analyze_with_llm(
         result.error = "Max retries exceeded"
     result.summary = f"Analysis failed: {result.error}"
     return result
+
+
+def extract_work_from_sessions(
+    cass_path: str,
+    since: datetime,
+    until: datetime,
+) -> list[dict]:
+    cmd = [cass_path, "search", "*", "--robot", "--limit", "500"]
+    cmd.extend(["--since", since.strftime("%Y-%m-%dT%H:%M:%S")])
+    
+    code, stdout, _ = run_command(cmd)
+    
+    if code != 0 or not stdout.strip():
+        return []
+    
+    try:
+        data = json.loads(stdout)
+        return data.get("hits", [])
+    except json.JSONDecodeError:
+        return []
+
+
+def scan_docs_for_changes(
+    extra_dirs: list[Path],
+    patterns: list[str],
+    since: datetime,
+) -> tuple[list[dict], list[dict]]:
+    created = []
+    modified = []
+    
+    for dir_path in extra_dirs:
+        if not dir_path.exists():
+            continue
+        
+        for pattern in patterns:
+            for file_path in dir_path.glob(pattern):
+                if not file_path.is_file():
+                    continue
+                
+                try:
+                    stat = file_path.stat()
+                    mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+                    ctime = datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc)
+                    
+                    if mtime < since:
+                        continue
+                    
+                    doc_info = {
+                        "path": str(file_path),
+                        "name": file_path.name,
+                        "modified_at": mtime.isoformat(),
+                    }
+                    
+                    if ctime >= since:
+                        created.append(doc_info)
+                    else:
+                        modified.append(doc_info)
+                except OSError:
+                    pass
+    
+    return created, modified
+
+
+def group_sessions_by_project(sessions: list[dict]) -> dict[str, list[dict]]:
+    projects: dict[str, list[dict]] = defaultdict(list)
+    
+    for session in sessions:
+        workspace = session.get("workspace", "unknown")
+        project_name = Path(workspace).name if workspace else "unknown"
+        projects[project_name].append(session)
+    
+    return dict(projects)
+
+
+def extract_files_from_sessions(sessions: list[dict]) -> set[str]:
+    files = set()
+    
+    for session in sessions:
+        content = session.get("content", "")
+        file_patterns = re.findall(r'(?:wrote|created|modified|edited|read)\s+[`"]?([^\s`"]+\.\w+)[`"]?', content, re.IGNORECASE)
+        files.update(file_patterns)
+    
+    return files
+
+
+def estimate_session_time(sessions: list[dict]) -> int:
+    if not sessions:
+        return 0
+    
+    timestamps = []
+    for session in sessions:
+        created_at = session.get("created_at")
+        if created_at:
+            if isinstance(created_at, int):
+                timestamps.append(created_at)
+            elif isinstance(created_at, str):
+                try:
+                    dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    timestamps.append(int(dt.timestamp() * 1000))
+                except ValueError:
+                    pass
+    
+    if len(timestamps) < 2:
+        return len(sessions) * 5
+    
+    timestamps.sort()
+    total_ms = timestamps[-1] - timestamps[0]
+    return max(5, min(480, total_ms // 60000))
+
+
+def generate_worklog(
+    sessions: list[dict],
+    extra_dirs: list[Path],
+    patterns: list[str],
+    since: datetime,
+    config: Config,
+    dry_run: bool = False,
+) -> WorkLog:
+    today = datetime.now().date().isoformat()
+    
+    project_groups = group_sessions_by_project(sessions)
+    
+    projects = []
+    for project_name, project_sessions in project_groups.items():
+        workspace = project_sessions[0].get("workspace", "") if project_sessions else ""
+        files = extract_files_from_sessions(project_sessions)
+        estimated_minutes = estimate_session_time(project_sessions)
+        
+        projects.append(ProjectWork(
+            name=project_name,
+            workspace=workspace,
+            sessions=project_sessions,
+            files_modified=files,
+            estimated_minutes=estimated_minutes,
+        ))
+    
+    projects.sort(key=lambda p: len(p.sessions), reverse=True)
+    
+    docs_created, docs_modified = scan_docs_for_changes(extra_dirs, patterns, since)
+    
+    total_minutes = sum(p.estimated_minutes for p in projects)
+    
+    highlights = []
+    if projects:
+        highlights.append(f"Most active: {projects[0].name} ({len(projects[0].sessions)} sessions)")
+    if docs_created:
+        highlights.append(f"{len(docs_created)} new docs created")
+    
+    return WorkLog(
+        date=today,
+        projects=projects,
+        docs_created=docs_created,
+        docs_modified=docs_modified,
+        highlights=highlights,
+        total_sessions=len(sessions),
+        total_estimated_minutes=total_minutes,
+    )
+
+
+def generate_worklog_markdown(worklog: WorkLog) -> str:
+    lines = [
+        f"# Daily Work Log - {worklog.date}",
+        "",
+        "## Summary",
+        "",
+        f"- **Total sessions**: {worklog.total_sessions}",
+        f"- **Estimated time**: {worklog.total_estimated_minutes} minutes (~{worklog.total_estimated_minutes // 60}h {worklog.total_estimated_minutes % 60}m)",
+        f"- **Projects touched**: {len(worklog.projects)}",
+        f"- **Docs created**: {len(worklog.docs_created)}",
+        f"- **Docs modified**: {len(worklog.docs_modified)}",
+        "",
+    ]
+    
+    if worklog.highlights:
+        lines.extend(["## Highlights", ""])
+        for highlight in worklog.highlights:
+            lines.append(f"- {highlight}")
+        lines.append("")
+    
+    lines.extend(["## Projects", ""])
+    
+    for project in worklog.projects:
+        session_count = len(project.sessions)
+        files_count = len(project.files_modified)
+        lines.append(f"### {project.name}")
+        lines.append("")
+        lines.append(f"- **Sessions**: {session_count}")
+        lines.append(f"- **Estimated time**: {project.estimated_minutes} minutes")
+        lines.append(f"- **Files touched**: {files_count}")
+        
+        if project.files_modified:
+            lines.append(f"- **Files**: {', '.join(list(project.files_modified)[:10])}")
+            if files_count > 10:
+                lines.append(f"  - ...and {files_count - 10} more")
+        
+        if project.workspace:
+            lines.append(f"- **Workspace**: `{project.workspace}`")
+        
+        lines.append("")
+    
+    if worklog.docs_created:
+        lines.extend(["## Docs Created", ""])
+        for doc in worklog.docs_created:
+            lines.append(f"- `{doc['path']}`")
+        lines.append("")
+    
+    if worklog.docs_modified:
+        lines.extend(["## Docs Modified", ""])
+        for doc in worklog.docs_modified:
+            lines.append(f"- `{doc['path']}`")
+        lines.append("")
+    
+    return "\n".join(lines)
+
+
+def generate_succinct_worklog(worklog: WorkLog) -> str:
+    lines = [
+        "## Daily Work Log",
+        "",
+        f"**{worklog.total_sessions} sessions** across **{len(worklog.projects)} projects** (~{worklog.total_estimated_minutes // 60}h {worklog.total_estimated_minutes % 60}m)",
+        "",
+    ]
+    
+    for project in worklog.projects[:5]:
+        files_preview = ", ".join(list(project.files_modified)[:3]) if project.files_modified else "no files tracked"
+        lines.append(f"- **{project.name}**: {len(project.sessions)} sessions, {project.estimated_minutes}m ({files_preview})")
+    
+    if len(worklog.projects) > 5:
+        lines.append(f"- ...and {len(worklog.projects) - 5} more projects")
+    
+    if worklog.docs_created:
+        lines.append("")
+        lines.append(f"**Docs created**: {len(worklog.docs_created)}")
+    
+    return "\n".join(lines)
+
+
+def generate_worklog_json(worklog: WorkLog) -> dict:
+    return {
+        "date": worklog.date,
+        "summary": {
+            "total_sessions": worklog.total_sessions,
+            "total_estimated_minutes": worklog.total_estimated_minutes,
+            "projects_count": len(worklog.projects),
+            "docs_created_count": len(worklog.docs_created),
+            "docs_modified_count": len(worklog.docs_modified),
+        },
+        "highlights": worklog.highlights,
+        "projects": [
+            {
+                "name": p.name,
+                "workspace": p.workspace,
+                "session_count": len(p.sessions),
+                "files_modified": list(p.files_modified),
+                "estimated_minutes": p.estimated_minutes,
+            }
+            for p in worklog.projects
+        ],
+        "docs_created": worklog.docs_created,
+        "docs_modified": worklog.docs_modified,
+    }
 
 
 def load_historical_data(output_dir: Path, days: int) -> list[dict]:
@@ -456,6 +841,7 @@ def generate_markdown_report(
     results: dict[str, CategoryResult],
     trends: dict[str, dict],
     metadata: dict,
+    worklog: WorkLog | None = None,
 ) -> str:
     date_str = metadata["date"]
     total_sessions = metadata["total_sessions"]
@@ -483,6 +869,10 @@ def generate_markdown_report(
         delta_str = f"+{delta}" if delta > 0 else ("0" if delta == 0 else str(delta))
         lines.append(f"- **{results[top_issue_name].display}** is the most common issue ({delta_str} vs 7-day avg)")
     
+    if worklog:
+        lines.append("")
+        lines.append(generate_succinct_worklog(worklog))
+    
     lines.extend(["", "## Anti-Patterns by Category", ""])
     
     for name, result in results.items():
@@ -493,7 +883,12 @@ def generate_markdown_report(
         delta = trend.get("delta", 0)
         delta_str = f"+{delta}" if delta > 0 else ("0" if delta == 0 else str(delta))
         
+        source_info = f"{len(result.cass_hits)} CASS"
+        if result.doc_hits:
+            source_info += f" + {len(result.doc_hits)} docs"
+        
         lines.append(f"### {result.display} ({len(result.anti_patterns)} occurrences, {delta_str} vs avg)")
+        lines.append(f"*Sources: {source_info}*")
         lines.append("")
         
         for ap in result.anti_patterns[:5]:
@@ -545,6 +940,9 @@ def generate_markdown_report(
         f"- **Categories analyzed**: {len(results)}",
     ])
     
+    if metadata.get("extra_dirs"):
+        lines.append(f"- **Extra dirs scanned**: {', '.join(metadata['extra_dirs'])}")
+    
     lines.extend(["", "## Session Links", "", "All sessions with findings (VS Code clickable):", ""])
     
     for name, result in results.items():
@@ -559,6 +957,7 @@ def generate_json_report(
     results: dict[str, CategoryResult],
     trends: dict[str, dict],
     metadata: dict,
+    worklog: WorkLog | None = None,
 ) -> dict:
     categories = {}
     session_links = []
@@ -571,6 +970,8 @@ def generate_json_report(
             "wins": result.wins,
             "summary": result.summary,
             "count": len(result.anti_patterns),
+            "cass_hits": len(result.cass_hits),
+            "doc_hits": len(result.doc_hits),
             "seven_day_avg": trends.get(name, {}).get("seven_day_avg", 0),
             "delta": trends.get(name, {}).get("delta", 0),
         }
@@ -588,7 +989,7 @@ def generate_json_report(
                 else:
                     session_links.append({"path": session, "line": 0, "category": name})
     
-    return {
+    report = {
         "date": metadata["date"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "time_range": {
@@ -604,6 +1005,11 @@ def generate_json_report(
         "session_links": session_links,
         "trends": trends,
     }
+    
+    if worklog:
+        report["worklog"] = generate_worklog_json(worklog)
+    
+    return report
 
 
 def send_failure_email(error: str, config: Config) -> bool:
@@ -650,6 +1056,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
     if verbose:
         console.print(f"[dim]Config loaded from {args.config}[/dim]")
         console.print(f"[dim]Output directory: {config.output_dir}[/dim]")
+        if config.extra_dirs:
+            console.print(f"[dim]Extra dirs: {', '.join(str(d) for d in config.extra_dirs)}[/dim]")
     
     with Progress(
         SpinnerColumn(),
@@ -707,6 +1115,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
         
         unordered_results: dict[str, CategoryResult] = {}
         total_sessions = 0
+        total_doc_hits = 0
         
         with ThreadPoolExecutor(max_workers=config.max_parallel) as executor:
             futures = {
@@ -720,6 +1129,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
                     result = future.result()
                     unordered_results[name] = result
                     total_sessions += len(result.cass_hits)
+                    total_doc_hits += len(result.doc_hits)
                 except Exception as e:
                     unordered_results[name] = CategoryResult(
                         name=name,
@@ -739,7 +1149,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
         progress.remove_task(task)
         
         if verbose:
-            console.print(f"[dim]Found {total_sessions} total session hits[/dim]")
+            console.print(f"[dim]Found {total_sessions} CASS hits + {total_doc_hits} doc hits[/dim]")
         
         prompt_template = DEFAULT_PROMPT_TEMPLATE
         if config.prompt_template_path.exists():
@@ -756,6 +1166,20 @@ def run_pipeline(args: argparse.Namespace) -> int:
         
         progress.remove_task(task)
         
+        worklog = None
+        if config.worklog_enabled:
+            task = progress.add_task("Generating work log...", total=None)
+            all_sessions = extract_work_from_sessions(config.cass_path, since, now)
+            worklog = generate_worklog(
+                all_sessions,
+                config.extra_dirs,
+                config.extra_patterns,
+                since,
+                config,
+                dry_run,
+            )
+            progress.remove_task(task)
+        
         task = progress.add_task("Calculating trends...", total=None)
         historical = load_historical_data(config.output_dir, config.trend_window)
         trends = calculate_trends(results, historical)
@@ -767,12 +1191,13 @@ def run_pipeline(args: argparse.Namespace) -> int:
             "total_sessions": total_sessions,
             "since": since.isoformat(),
             "until": now.isoformat(),
+            "extra_dirs": [str(d) for d in config.extra_dirs] if config.extra_dirs else [],
         }
         
         task = progress.add_task("Generating reports...", total=None)
         
-        json_report = generate_json_report(results, trends, metadata)
-        md_report = generate_markdown_report(results, trends, metadata)
+        json_report = generate_json_report(results, trends, metadata, worklog)
+        md_report = generate_markdown_report(results, trends, metadata, worklog)
         
         json_path = config.output_dir / f"daily-report-{today}.json"
         md_path = config.output_dir / f"daily-report-{today}.md"
@@ -783,6 +1208,12 @@ def run_pipeline(args: argparse.Namespace) -> int:
         with open(md_path, "w") as f:
             f.write(md_report)
         
+        if worklog:
+            worklog_md = generate_worklog_markdown(worklog)
+            worklog_path = config.output_dir / f"daily-worklog-{today}.md"
+            with open(worklog_path, "w") as f:
+                f.write(worklog_md)
+        
         progress.remove_task(task)
         
         if not dry_run:
@@ -791,10 +1222,15 @@ def run_pipeline(args: argparse.Namespace) -> int:
     console.print(f"\n[green]Reports generated:[/green]")
     console.print(f"  JSON: {json_path}")
     console.print(f"  Markdown: {md_path}")
+    if worklog:
+        console.print(f"  Work Log: {config.output_dir / f'daily-worklog-{today}.md'}")
     
     total_anti = sum(len(r.anti_patterns) for r in results.values())
     total_wins = sum(len(r.wins) for r in results.values())
     console.print(f"\n[bold]Summary:[/bold] {total_anti} anti-patterns, {total_wins} wins across {total_sessions} sessions")
+    
+    if worklog:
+        console.print(f"[bold]Work Log:[/bold] {len(worklog.projects)} projects, ~{worklog.total_estimated_minutes}m estimated time")
     
     return 0
 

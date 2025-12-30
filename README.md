@@ -1,6 +1,6 @@
 # Agent Reflection
 
-Daily self-improvement pipeline for coding agents. Analyzes sessions via [CASS](https://github.com/Dicklesworthstone/coding_agent_session_search) to extract patterns, anti-patterns, and wins.
+Daily self-improvement pipeline for coding agents. Analyzes sessions via [CASS](https://github.com/Dicklesworthstone/coding_agent_session_search) to extract patterns, anti-patterns, and wins. Also generates daily work logs for content creation.
 
 ## Quick Start
 
@@ -59,6 +59,13 @@ prompt_template = "~/.config/cass/daily-report-prompt.md"
 max_retries = 3
 retry_backoff_seconds = [5, 15, 45]
 
+[sources]
+extra_dirs = ["~/Documents/docs"]  # additional dirs to scan
+extra_patterns = ["*.md", "*.txt"] # file patterns to include
+
+[worklog]
+enabled = true            # generate daily work log
+
 [sync]
 sync_enabled = true       # sync remote sources before analysis
 sync_sources = []         # specific sources, empty = all
@@ -104,8 +111,9 @@ launchctl start com.agent-reflection.daily
 
 Reports are written to `~/Documents/docs/cass-reports/`:
 
-- `daily-report-YYYY-MM-DD.json` - Machine-readable
-- `daily-report-YYYY-MM-DD.md` - Human-readable
+- `daily-report-YYYY-MM-DD.json` - Machine-readable report
+- `daily-report-YYYY-MM-DD.md` - Human-readable report (includes succinct work log)
+- `daily-worklog-YYYY-MM-DD.md` - Full daily work log (for blogging/export)
 - `.last-run` - Timestamp of last successful run
 
 ## Categories Analyzed
@@ -122,6 +130,19 @@ Reports are written to `~/Documents/docs/cass-reports/`:
 | **TODO Accumulation** | Technical debt markers not addressed |
 
 Custom categories can be added via config using `[[custom_categories]]` sections.
+
+## Daily Work Log
+
+The work log captures:
+
+- **Projects touched** - Extracted from workspace paths
+- **Files created/modified** - Parsed from session tool calls
+- **Time estimates** - Calculated from session timestamps
+- **Docs created/modified** - From extra directories
+
+Two versions are generated:
+1. **Succinct** - Embedded in main report for quick reference
+2. **Full** - Separate file for blogging/content creation
 
 ## License
 
