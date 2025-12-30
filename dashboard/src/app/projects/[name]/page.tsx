@@ -16,9 +16,6 @@ export default function ProjectDetailPage({ params }: Props) {
   if (project === undefined) {
     return (
       <main className="min-h-screen">
-        <header className="border-b border-zinc-800 px-6 py-4">
-          <div className="h-6 w-48 bg-zinc-800 rounded animate-pulse" />
-        </header>
         <div className="max-w-4xl mx-auto px-6 py-8">
           <div className="h-64 bg-zinc-900 rounded-lg animate-pulse" />
         </div>
@@ -29,11 +26,6 @@ export default function ProjectDetailPage({ params }: Props) {
   if (project === null) {
     return (
       <main className="min-h-screen">
-        <header className="border-b border-zinc-800 px-6 py-4">
-          <Link href="/projects" className="text-zinc-500 hover:text-zinc-300">
-            Back to Projects
-          </Link>
-        </header>
         <div className="max-w-4xl mx-auto px-6 py-8">
           <div className="text-center py-12 text-zinc-500">
             Project not found: {name}
@@ -45,17 +37,12 @@ export default function ProjectDetailPage({ params }: Props) {
 
   return (
     <main className="min-h-screen">
-      <header className="border-b border-zinc-800 px-6 py-4">
-        <div className="flex items-center gap-4">
-          <Link href="/" className="text-zinc-500 hover:text-zinc-300">Home</Link>
-          <span className="text-zinc-700">/</span>
-          <Link href="/projects" className="text-zinc-500 hover:text-zinc-300">Projects</Link>
-          <span className="text-zinc-700">/</span>
-          <h1 className="text-xl font-semibold">{project.name}</h1>
-        </div>
-      </header>
-
       <div className="max-w-4xl mx-auto px-6 py-8 space-y-8">
+        <div className="flex items-center gap-2 text-sm text-zinc-500">
+          <Link href="/projects" className="hover:text-zinc-300">Projects</Link>
+          <span>/</span>
+          <span className="text-zinc-200">{project.name}</span>
+        </div>
         <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard label="Sessions" value={project.totalSessions} />
           <StatCard label="Commits" value={project.totalCommits} />

@@ -7,9 +7,14 @@
     
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/nicobailon/.local/bin/uv</string>
-        <string>run</string>
-        <string>/Users/nicobailon/Documents/development/agent-reflection/main.py</string>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>
+cd /Users/nicobailon/Documents/development/agent-reflection &amp;&amp; \
+export CONVEX_URL="https://your-deployment.convex.cloud" &amp;&amp; \
+/Users/nicobailon/.local/bin/uv run main.py &amp;&amp; \
+npm run ingest:github
+        </string>
     </array>
     
     <key>StartCalendarInterval</key>
@@ -29,9 +34,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/Users/nicobailon/.local/bin</string>
-        <key>HOME</key>
-        <string>/Users/nicobailon</string>
+        <string>/usr/local/bin:/usr/bin:/bin:/Users/nicobailon/.local/bin:/opt/homebrew/bin</string>
     </dict>
 </dict>
 </plist>

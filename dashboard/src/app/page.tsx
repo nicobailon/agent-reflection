@@ -6,23 +6,6 @@ import Link from "next/link";
 export default function DashboardHome() {
   return (
     <main className="min-h-screen">
-      <header className="border-b border-zinc-800 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold tracking-tight">Agent Reflection</h1>
-          <nav className="flex gap-4 text-sm">
-            <Link href="/projects" className="text-zinc-400 hover:text-zinc-100">
-              Projects
-            </Link>
-            <Link href="/insights" className="text-zinc-400 hover:text-zinc-100">
-              Insights
-            </Link>
-            <Link href="/bookmarks" className="text-zinc-400 hover:text-zinc-100">
-              Bookmarks
-            </Link>
-          </nav>
-        </div>
-      </header>
-
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-8">
         <section>
           <h2 className="text-sm font-medium mb-4 text-zinc-500 uppercase tracking-wider">
@@ -58,6 +41,8 @@ export default function DashboardHome() {
               <QuickLink href="/projects" label="All Projects" />
               <QuickLink href="/insights" label="View Insights" />
               <QuickLink href="/bookmarks" label="Bookmarks" />
+              <QuickLink href="/blog" label="Blog Drafts" />
+              <QuickLink href="/settings" label="Settings" />
             </div>
           </div>
         </div>

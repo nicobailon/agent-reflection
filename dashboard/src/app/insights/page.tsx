@@ -3,7 +3,6 @@
 import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { TrendChart } from "@/components/TrendChart";
-import Link from "next/link";
 import { useMemo } from "react";
 
 const CATEGORIES = [
@@ -23,14 +22,6 @@ export default function InsightsPage() {
 
   return (
     <main className="min-h-screen">
-      <header className="border-b border-zinc-800 px-6 py-4">
-        <div className="flex items-center gap-4">
-          <Link href="/" className="text-zinc-500 hover:text-zinc-300">Home</Link>
-          <span className="text-zinc-700">/</span>
-          <h1 className="text-xl font-semibold">Insights</h1>
-        </div>
-      </header>
-
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-8">
         <section>
           <h2 className="text-lg font-medium mb-4 text-zinc-300">Today&apos;s Analysis</h2>

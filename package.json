@@ -10,6 +10,7 @@
     "build": "npm run build --workspace=dashboard",
     "ingest:github": "npm run github --workspace=ingestion",
     "ingest:twitter": "npm run twitter --workspace=ingestion",
+    "generate:blog": "npm run blog --workspace=ingestion",
     "convex:dev": "npx convex dev"
   }
 }

@@ -19,16 +19,6 @@ export default function ProjectsPage() {
 
   return (
     <main className="min-h-screen">
-      <header className="border-b border-zinc-800 px-6 py-4">
-        <div className="flex items-center gap-4">
-          <Link href="/" className="text-zinc-500 hover:text-zinc-300">
-            Home
-          </Link>
-          <span className="text-zinc-700">/</span>
-          <h1 className="text-xl font-semibold">Projects</h1>
-        </div>
-      </header>
-
       <div className="max-w-4xl mx-auto px-6 py-8">
         {projects === undefined ? (
           <div className="space-y-4">

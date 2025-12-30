@@ -1,148 +1,86 @@
 # Agent Reflection
 
-Daily self-improvement pipeline for coding agents. Analyzes sessions via [CASS](https://github.com/Dicklesworthstone/coding_agent_session_search) to extract patterns, anti-patterns, and wins. Also generates daily work logs for content creation.
+Developer activity tracking and insight system. Aggregates data from coding agent sessions (CASS), GitHub, local documentation, and Twitter bookmarks into a real-time dashboard.
 
 ## Quick Start
 
-```bash
-# Dry run (no LLM calls)
-uv run main.py --dry-run --verbose
+1. **Install dependencies**:
+   ```bash
+   npm install
+   ```
 
-# Full run
-uv run main.py
+2. **Set up Convex**:
+   ```bash
+   npx convex init
+   npx convex dev
+   ```
 
-# With custom config
-uv run main.py --config /path/to/config.toml
+3. **Configure environment**:
+   ```bash
+   # Copy your Convex URL from the dashboard
+   export CONVEX_URL="https://your-deployment.convex.cloud"
+   ```
+
+4. **Run ingestion**:
+   ```bash
+   # CASS + Docs (Python)
+   uv run main.py
+   
+   # GitHub
+   npm run ingest:github
+   
+   # Twitter bookmarks
+   npm run ingest:twitter
+   ```
+
+5. **Start dashboard**:
+   ```bash
+   npm run dev
+   ```
+
+## Project Structure
+
+```
+agent-reflection/
+├── main.py               # CASS + Docs ingestion (Python)
+├── convex/               # Convex backend
+│   ├── schema.ts         # Database schema
+│   ├── activities.ts     # Activity queries/mutations
+│   ├── projects.ts       # Project management
+│   └── ...
+├── dashboard/            # Next.js dashboard
+│   ├── src/app/          # Pages
+│   └── src/components/   # React components
+└── ingestion/            # TypeScript ingestion scripts
+    └── scripts/
+        ├── github-ingest.ts
+        └── twitter-ingest.ts
 ```
 
-## Setup
+## Data Sources
 
-### 1. Install Dependencies
+| Source | Format | Frequency | Script |
+|--------|--------|-----------|--------|
+| CASS Sessions | JSONL | Daily | `main.py` |
+| GitHub Activity | REST API | Daily | `github-ingest.ts` |
+| Documentation | Markdown files | Daily | `main.py` |
+| Twitter Bookmarks | JSON export | Weekly | `twitter-ingest.ts` |
 
-Uses [uv](https://github.com/astral-sh/uv) with inline script metadata (PEP 723). No venv needed.
+## Configuration
 
-```bash
-# Install uv if not present
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+Config files are stored outside the repo:
+- `~/.config/cass/daily-report.toml` - Main config
+- `~/.config/cass/daily-report-prompt.md` - LLM prompt
 
-### 2. Install CASS
-
-Build and install [cass](https://github.com/Dicklesworthstone/coding_agent_session_search):
-
-```bash
-cd /path/to/coding_agent_session_search
-cargo build --release
-cp target/release/cass ~/.local/bin/
-```
-
-### 3. Configure
-
-Create config at `~/.config/cass/daily-report.toml`:
-
-```toml
-[general]
-output_dir = "~/Documents/docs/cass-reports"
-trend_window = 7
-cass_path = "/path/to/cass"  # if not in PATH
-
-[queries]
-max_parallel = 3
-scope = "since_last_run"  # or "last_24h", "last_7d"
-agents = []               # filter by agent, empty = all
-workspace_include = []    # filter by workspace
-workspace_exclude = []    # exclude workspaces
-
-[llm]
-method = "pi"             # LLM command to use
-prompt_template = "~/.config/cass/daily-report-prompt.md"
-max_retries = 3
-retry_backoff_seconds = [5, 15, 45]
-
-[sources]
-extra_dirs = ["~/Documents/docs"]  # additional dirs to scan
-extra_patterns = ["*.md", "*.txt"] # file patterns to include
-
-[worklog]
-enabled = true            # generate daily work log
-
-[sync]
-sync_enabled = true       # sync remote sources before analysis
-sync_sources = []         # specific sources, empty = all
-
-[notifications]
-email_enabled = false
-email_provider = "sendgrid"
-email_to = ""
-email_from = ""
-
-# Custom categories (optional)
-# [[custom_categories]]
-# name = "type_safety"
-# display = "Type Safety"
-# queries = ["any type", "as any", "@ts-ignore"]
-# description = "TypeScript type safety violations"
-```
-
-### 4. Schedule (macOS)
+## Development
 
 ```bash
-# Copy launchd plist
-cp com.agent-reflection.daily.plist ~/Library/LaunchAgents/
+# Start Convex dev server (terminal 1)
+npx convex dev
 
-# Load
-launchctl load ~/Library/LaunchAgents/com.agent-reflection.daily.plist
-
-# Test immediate run
-launchctl start com.agent-reflection.daily
+# Start Next.js dev server (terminal 2)
+npm run dev
 ```
-
-## CLI Options
-
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Run queries but skip LLM and email |
-| `--verbose` | Detailed logging output |
-| `--config PATH` | Custom config file path |
-| `--output-dir PATH` | Override output directory |
-| `--force-index` | Force cass reindex before analysis |
-
-## Output
-
-Reports are written to `~/Documents/docs/cass-reports/`:
-
-- `daily-report-YYYY-MM-DD.json` - Machine-readable report
-- `daily-report-YYYY-MM-DD.md` - Human-readable report (includes succinct work log)
-- `daily-worklog-YYYY-MM-DD.md` - Full daily work log (for blogging/export)
-- `.last-run` - Timestamp of last successful run
-
-## Categories Analyzed
-
-| Category | Description |
-|----------|-------------|
-| **Testing Gaps** | Agents claiming to test without actually running tests |
-| **Unused Artifacts** | Screenshots or files created but never analyzed |
-| **Debug Pollution** | Debug logging left in production code |
-| **State Management** | Missing state update notifications after mutations |
-| **Naming Inconsistencies** | Key name mismatches and identifier typos |
-| **Process Skips** | Verification steps bypassed before commits |
-| **Error Handling** | Missing or inadequate error handling |
-| **TODO Accumulation** | Technical debt markers not addressed |
-
-Custom categories can be added via config using `[[custom_categories]]` sections.
-
-## Daily Work Log
-
-The work log captures:
-
-- **Projects touched** - Extracted from workspace paths
-- **Files created/modified** - Parsed from session tool calls
-- **Time estimates** - Calculated from session timestamps
-- **Docs created/modified** - From extra directories
-
-Two versions are generated:
-1. **Succinct** - Embedded in main report for quick reference
-2. **Full** - Separate file for blogging/content creation
 
 ## License
 
