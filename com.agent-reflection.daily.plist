@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.agent-reflection.daily</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/nicobailon/.local/bin/uv</string>
+        <string>run</string>
+        <string>/Users/nicobailon/Documents/development/agent-reflection/main.py</string>
+    </array>
+    
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/nicobailon/Documents/docs/cass-reports/cron.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/nicobailon/Documents/docs/cass-reports/cron-error.log</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/Users/nicobailon/.local/bin</string>
+        <key>HOME</key>
+        <string>/Users/nicobailon</string>
+    </dict>
+</dict>
+</plist>
