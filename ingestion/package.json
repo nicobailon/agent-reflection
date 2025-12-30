@@ -1,0 +1,17 @@
+{
+  "name": "@agent-reflection/ingestion",
+  "type": "module",
+  "scripts": {
+    "github": "npx tsx scripts/github-ingest.ts",
+    "twitter": "npx tsx scripts/twitter-ingest.ts",
+    "blog": "npx tsx scripts/generate-blog-draft.ts"
+  },
+  "dependencies": {
+    "convex": "^1.17.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

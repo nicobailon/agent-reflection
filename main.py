@@ -929,6 +929,105 @@ def generate_markdown_report(
     return "\n".join(lines)
 
 
+def push_to_convex(
+    results: dict[str, CategoryResult],
+    worklog: WorkLog | None,
+    sessions: list[dict],
+    convex_url: str,
+) -> bool:
+    today = datetime.now().date().isoformat()
+
+    activities = []
+    for session in sessions:
+        created_at = session.get("created_at")
+        if created_at:
+            if isinstance(created_at, int):
+                timestamp_ms = created_at
+            elif isinstance(created_at, str):
+                try:
+                    dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    timestamp_ms = int(dt.timestamp() * 1000)
+                except ValueError:
+                    timestamp_ms = int(datetime.now().timestamp() * 1000)
+            else:
+                timestamp_ms = int(datetime.now().timestamp() * 1000)
+        else:
+            timestamp_ms = int(datetime.now().timestamp() * 1000)
+
+        activity_date = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).date().isoformat()
+
+        activities.append({
+            "type": "session_message",
+            "timestamp": timestamp_ms,
+            "date": activity_date,
+            "source": "cass",
+            "sourceId": f"cass:{session.get('source_path', '')}:{session.get('line_number', 0)}",
+            "project": Path(session.get("workspace", "")).name if session.get("workspace") else None,
+            "workspace": session.get("workspace"),
+            "isPublic": False,
+            "payload": {
+                "sessionPath": session.get("source_path"),
+                "lineNumber": session.get("line_number"),
+                "agent": session.get("agent"),
+                "workspace": session.get("workspace"),
+                "title": session.get("title"),
+            },
+        })
+
+    analysis_results = []
+    for name, result in results.items():
+        analysis_results.append({
+            "date": today,
+            "category": name,
+            "categoryDisplay": result.display,
+            "antiPatterns": result.anti_patterns,
+            "wins": result.wins,
+            "summary": result.summary,
+            "cassHits": len(result.cass_hits),
+            "docHits": len(result.doc_hits),
+            "sevenDayAvg": 0,
+            "delta": 0,
+        })
+
+    headers = {"Content-Type": "application/json"}
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            if activities:
+                resp = client.post(
+                    f"{convex_url}/api/mutation/activities:batchInsert",
+                    json={
+                        "args": {"activities": activities},
+                        "format": "json",
+                    },
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                result_data = resp.json()
+                console.print(f"[green]Pushed {len(activities)} activities to Convex (inserted: {result_data.get('inserted', '?')})[/green]")
+
+            for ar in analysis_results:
+                resp = client.post(
+                    f"{convex_url}/api/mutation/analysisResults:upsert",
+                    json={
+                        "args": ar,
+                        "format": "json",
+                    },
+                    headers=headers,
+                )
+                resp.raise_for_status()
+
+            console.print(f"[green]Pushed {len(analysis_results)} analysis results to Convex[/green]")
+
+        return True
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Convex HTTP error: {e.response.status_code} - {e.response.text}[/red]")
+        return False
+    except Exception as e:
+        console.print(f"[red]Failed to push to Convex: {e}[/red]")
+        return False
+
+
 def generate_json_report(
     results: dict[str, CategoryResult],
     trends: dict[str, dict],
@@ -1155,6 +1254,18 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 dry_run,
             )
             progress.remove_task(task)
+        
+        convex_url = os.environ.get("CONVEX_URL")
+        if convex_url:
+            console.print("[blue]Pushing to Convex...[/blue]")
+            if not config.worklog_enabled:
+                all_sessions = extract_work_from_sessions(config.cass_path, since, now)
+            push_to_convex(
+                results,
+                worklog,
+                all_sessions,
+                convex_url,
+            )
         
         task = progress.add_task("Calculating trends...", total=None)
         historical = load_historical_data(config.output_dir, config.trend_window)

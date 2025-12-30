@@ -1,0 +1,15 @@
+{
+  "name": "agent-reflection",
+  "private": true,
+  "workspaces": [
+    "ingestion",
+    "dashboard"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=dashboard",
+    "build": "npm run build --workspace=dashboard",
+    "ingest:github": "npm run github --workspace=ingestion",
+    "ingest:twitter": "npm run twitter --workspace=ingestion",
+    "convex:dev": "npx convex dev"
+  }
+}
