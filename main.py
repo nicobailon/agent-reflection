@@ -15,7 +15,6 @@ and wins for continuous improvement. Also generates daily work logs.
 """
 
 import argparse
-import fnmatch
 import json
 import os
 import re
@@ -125,29 +124,6 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   ],
   "summary": "One sentence summary of findings for this category"
 }}
-"""
-
-WORKLOG_PROMPT_TEMPLATE = """Analyze the following coding session data and generate a concise work log summary.
-
-## Session Data
-{session_data}
-
-## Output Format
-Respond with ONLY valid JSON (no markdown, no explanation):
-{{
-  "projects": [
-    {{
-      "name": "project-name",
-      "accomplishments": ["Brief accomplishment 1", "Brief accomplishment 2"],
-      "files_touched": 5,
-      "estimated_minutes": 45
-    }}
-  ],
-  "highlights": ["Key highlight 1", "Key highlight 2"],
-  "total_estimated_minutes": 120
-}}
-
-Focus on meaningful accomplishments, not trivial changes. Be concise.
 """
 
 
