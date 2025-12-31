@@ -154,11 +154,8 @@ async function processFile(
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const updateSource = db.prepare("UPDATE bookmarks SET source = 'both' WHERE id = ?");
-  const getMaxVecRowid = db.prepare("SELECT MAX(vec_rowid) as max FROM bookmark_embedding_map");
-  const insertEmbedding = db.prepare("INSERT INTO bookmark_embeddings (rowid, embedding) VALUES (?, ?)");
+  const insertEmbedding = db.prepare("INSERT INTO bookmark_embeddings (embedding) VALUES (?)");
   const insertEmbeddingMap = db.prepare("INSERT INTO bookmark_embedding_map (bookmark_id, vec_rowid) VALUES (?, ?)");
-
-  let maxRowid = (getMaxVecRowid.get() as { max: number | null })?.max || 0;
   let inserted = 0;
   let upgraded = 0;
   let skipped = 0;
@@ -200,10 +197,10 @@ async function processFile(
         file.source
       );
 
-      maxRowid++;
       const embedding = new Float32Array(allEmbeddings[idx]);
-      insertEmbedding.run(maxRowid, embedding);
-      insertEmbeddingMap.run(id, maxRowid);
+      const result = insertEmbedding.run(embedding);
+      const vecRowid = Number(result.lastInsertRowid);
+      insertEmbeddingMap.run(id, vecRowid);
       inserted++;
     }
   });
