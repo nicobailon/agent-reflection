@@ -60,26 +60,33 @@ function toBookmarkClient(row: Record<string, unknown>): Record<string, unknown>
 }
 
 async function generateEmbedding(text: string): Promise<number[]> {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY not set");
+  const openrouterKey = process.env.OPENROUTER_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
+  
+  if (!openrouterKey && !openaiKey) {
+    throw new Error("OPENROUTER_API_KEY or OPENAI_API_KEY required");
   }
-  const response = await fetch("https://api.openai.com/v1/embeddings", {
+  
+  const baseUrl = openrouterKey 
+    ? "https://openrouter.ai/api/v1/embeddings"
+    : "https://api.openai.com/v1/embeddings";
+  const apiKey = openrouterKey || openaiKey;
+  const model = openrouterKey ? "openai/text-embedding-3-small" : "text-embedding-3-small";
+  
+  const response = await fetch(baseUrl, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: "text-embedding-3-small",
-      input: text,
-    }),
+    body: JSON.stringify({ model, input: text }),
   });
   if (!response.ok) {
-    throw new Error(`OpenAI API error: ${response.status}`);
+    throw new Error(`Embedding API error: ${response.status}`);
   }
   const data = (await response.json()) as { data: Array<{ embedding: number[] }> };
   if (!data.data?.[0]?.embedding) {
-    throw new Error("Invalid response from OpenAI");
+    throw new Error("Invalid response from embedding API");
   }
   return data.data[0].embedding;
 }
