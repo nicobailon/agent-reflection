@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
+    "commander": "^4.1.1",
     "openai": "^4.77.0",
     "sqlite-vec": "^0.1.6"
   },
