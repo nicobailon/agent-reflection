@@ -28,7 +28,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+import sqlite3
 import tomli
+import uuid
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -1028,6 +1030,143 @@ def push_to_convex(
         return False
 
 
+def push_to_sqlite(
+    results: dict[str, CategoryResult],
+    worklog: WorkLog | None,
+    sessions: list[dict],
+) -> bool:
+    today = datetime.now().date().isoformat()
+    db_path = os.path.expanduser("~/data/agent-reflection/reflection.db")
+
+    activities = []
+    for session in sessions:
+        created_at = session.get("created_at")
+        if created_at:
+            if isinstance(created_at, int):
+                timestamp_ms = created_at
+            elif isinstance(created_at, str):
+                try:
+                    dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    timestamp_ms = int(dt.timestamp() * 1000)
+                except ValueError:
+                    timestamp_ms = int(datetime.now().timestamp() * 1000)
+            else:
+                timestamp_ms = int(datetime.now().timestamp() * 1000)
+        else:
+            timestamp_ms = int(datetime.now().timestamp() * 1000)
+
+        activity_date = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).date().isoformat()
+
+        activities.append({
+            "type": "session_message",
+            "timestamp": timestamp_ms,
+            "date": activity_date,
+            "source": "cass",
+            "source_id": f"cass:{session.get('source_path', '')}:{session.get('line_number', 0)}",
+            "project": Path(session.get("workspace", "")).name if session.get("workspace") else None,
+            "workspace": session.get("workspace"),
+            "repo_full_name": None,
+            "is_public": 0,
+            "payload": json.dumps({
+                "sessionPath": session.get("source_path"),
+                "lineNumber": session.get("line_number"),
+                "agent": session.get("agent"),
+                "workspace": session.get("workspace"),
+                "title": session.get("title"),
+            }),
+        })
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        for a in activities:
+            cursor.execute("""
+                INSERT INTO activities 
+                (id, type, timestamp, date, source, source_id, project, workspace, repo_full_name, is_public, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_id) DO UPDATE SET
+                    payload = excluded.payload
+            """, (
+                str(uuid.uuid4()),
+                a["type"],
+                a["timestamp"],
+                a["date"],
+                a["source"],
+                a["source_id"],
+                a["project"],
+                a["workspace"],
+                a["repo_full_name"],
+                a["is_public"],
+                a["payload"],
+            ))
+
+        for name, result in results.items():
+            cursor.execute("""
+                INSERT INTO analysis_results 
+                (id, date, category, category_display, anti_patterns, wins, summary, cass_hits, doc_hits, seven_day_avg, delta)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(date, category) DO UPDATE SET
+                    anti_patterns = excluded.anti_patterns,
+                    wins = excluded.wins,
+                    summary = excluded.summary,
+                    cass_hits = excluded.cass_hits,
+                    doc_hits = excluded.doc_hits
+            """, (
+                str(uuid.uuid4()),
+                today,
+                name,
+                result.display,
+                json.dumps(result.anti_patterns),
+                json.dumps(result.wins),
+                result.summary,
+                len(result.cass_hits),
+                len(result.doc_hits),
+                0,
+                0,
+            ))
+
+        cursor.execute("""
+            SELECT 
+                COUNT(CASE WHEN source = 'cass' THEN 1 END) as sessions,
+                COUNT(CASE WHEN type = 'commit' THEN 1 END) as commits,
+                COUNT(CASE WHEN type = 'issue_closed' THEN 1 END) as issues_closed,
+                COUNT(CASE WHEN type = 'pr_merged' THEN 1 END) as prs_merged
+            FROM activities WHERE date = ?
+        """, (today,))
+        row = cursor.fetchone()
+        sessions_count, commits, issues_closed, prs_merged = row
+
+        total_activity = sessions_count + commits + issues_closed + prs_merged
+        level = 0
+        if total_activity >= 20:
+            level = 4
+        elif total_activity >= 10:
+            level = 3
+        elif total_activity >= 5:
+            level = 2
+        elif total_activity >= 1:
+            level = 1
+
+        estimated_minutes = sessions_count * 30 + commits * 5
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO day_activities 
+            (date, level, sessions, commits, issues_closed, prs_merged, estimated_minutes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (today, level, sessions_count, commits, issues_closed, prs_merged, estimated_minutes))
+
+        conn.commit()
+        conn.close()
+
+        console.print(f"[green]Pushed {len(activities)} activities and {len(results)} analysis results to SQLite[/green]")
+        return True
+
+    except Exception as e:
+        console.print(f"[red]Failed to push to SQLite: {e}[/red]")
+        return False
+
+
 def generate_json_report(
     results: dict[str, CategoryResult],
     trends: dict[str, dict],
@@ -1255,16 +1394,14 @@ def run_pipeline(args: argparse.Namespace) -> int:
             )
             progress.remove_task(task)
         
-        convex_url = os.environ.get("CONVEX_URL")
-        if convex_url:
-            console.print("[blue]Pushing to Convex...[/blue]")
+        if not dry_run:
+            console.print("[blue]Pushing to SQLite...[/blue]")
             if not config.worklog_enabled:
                 all_sessions = extract_work_from_sessions(config.cass_path, since, now)
-            push_to_convex(
+            push_to_sqlite(
                 results,
                 worklog,
                 all_sessions,
-                convex_url,
             )
         
         task = progress.add_task("Calculating trends...", total=None)

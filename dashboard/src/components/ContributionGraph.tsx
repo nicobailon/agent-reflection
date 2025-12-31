@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
+import useSWR from "swr";
+import { fetcher } from "@/lib/api";
 import { useMemo } from "react";
 
 interface DayData {
@@ -26,10 +26,10 @@ export function ContributionGraph({ weeks = 52 }: ContributionGraphProps) {
     };
   }, [weeks]);
 
-  const data = useQuery(api.dayActivities.getContributionGraph, {
-    startDate,
-    endDate,
-  });
+  const { data } = useSWR<DayData[]>(
+    `/api/day-activities?startDate=${startDate}&endDate=${endDate}`,
+    fetcher
+  );
 
   const grid = useMemo(() => {
     if (!data) return null;

@@ -2,16 +2,23 @@
   "name": "@agent-reflection/ingestion",
   "type": "module",
   "scripts": {
-    "github": "npx tsx scripts/github-ingest.ts",
-    "twitter": "npx tsx scripts/twitter-ingest.ts",
-    "blog": "npx tsx scripts/generate-blog-draft.ts"
+    "twitter": "npx tsx scripts/twitter-ingest-sqlite.ts",
+    "cli:search": "npx tsx scripts/cli/search.ts",
+    "cli:semantic": "npx tsx scripts/cli/semantic.ts",
+    "cli:similar": "npx tsx scripts/cli/similar.ts",
+    "cli:stats": "npx tsx scripts/cli/stats.ts",
+    "cli:get": "npx tsx scripts/cli/get.ts",
+    "cli:backfill": "npx tsx scripts/cli/backfill.ts"
   },
   "dependencies": {
-    "convex": "^1.17.0"
+    "better-sqlite3": "^11.7.0",
+    "openai": "^4.77.0",
+    "sqlite-vec": "^0.1.6"
   },
   "devDependencies": {
-    "tsx": "^4.19.0",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
 }

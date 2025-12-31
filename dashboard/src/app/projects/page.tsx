@@ -1,21 +1,23 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
+import useSWR from "swr";
+import { fetcher } from "@/lib/api";
 import Link from "next/link";
 
 interface Project {
-  _id: string;
   name: string;
   description?: string;
   totalSessions: number;
   totalCommits: number;
-  isPublic: boolean;
+  isPublic: number;
   repoFullName?: string;
 }
 
 export default function ProjectsPage() {
-  const projects = useQuery(api.projects.list, { includeArchived: false });
+  const { data: projects } = useSWR<Project[]>(
+    "/api/projects?includeArchived=false",
+    fetcher
+  );
 
   return (
     <main className="min-h-screen">
@@ -34,7 +36,7 @@ export default function ProjectsPage() {
           <div className="space-y-4">
             {projects.map((project: Project) => (
               <Link
-                key={project._id}
+                key={project.name}
                 href={`/projects/${encodeURIComponent(project.name)}`}
                 className="block bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 hover:border-zinc-700 transition-colors"
               >
@@ -51,7 +53,7 @@ export default function ProjectsPage() {
                   </div>
                 </div>
                 <div className="flex gap-2 mt-3">
-                  {project.isPublic && (
+                  {project.isPublic === 1 && (
                     <span className="text-xs bg-emerald-900/50 text-emerald-400 px-2 py-0.5 rounded">
                       Public
                     </span>

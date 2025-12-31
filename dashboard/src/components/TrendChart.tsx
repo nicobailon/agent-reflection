@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
+import useSWR from "swr";
+import { fetcher } from "@/lib/api";
 import {
   LineChart,
   Line,
@@ -11,13 +11,22 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
+interface TrendData {
+  date: string;
+  count: number;
+  sevenDayAvg: number;
+}
+
 interface TrendChartProps {
   category: string;
   days?: number;
 }
 
 export function TrendChart({ category, days = 30 }: TrendChartProps) {
-  const data = useQuery(api.analysisResults.getTrend, { category, days });
+  const { data } = useSWR<TrendData[]>(
+    `/api/analysis-results/trend?category=${category}&days=${days}`,
+    fetcher
+  );
 
   if (!data) {
     return <div className="h-48 bg-zinc-900 rounded-lg animate-pulse" />;
@@ -31,7 +40,7 @@ export function TrendChart({ category, days = 30 }: TrendChartProps) {
     );
   }
 
-  const chartData = data.map((d: { date: string; count: number; sevenDayAvg: number }) => ({
+  const chartData = data.map((d) => ({
     date: d.date.slice(5),
     count: d.count,
     avg: d.sevenDayAvg,

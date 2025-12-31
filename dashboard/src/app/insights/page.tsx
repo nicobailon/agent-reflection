@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
+import useSWR from "swr";
+import { fetcher } from "@/lib/api";
 import { TrendChart } from "@/components/TrendChart";
 import { useMemo } from "react";
 
@@ -16,9 +16,20 @@ const CATEGORIES = [
   { id: "todo_accumulation", name: "TODO Accumulation" },
 ];
 
+interface AnalysisResult {
+  id: string;
+  categoryDisplay: string;
+  summary: string;
+  antiPatterns?: Array<{ description: string }>;
+  wins?: Array<{ description: string }>;
+}
+
 export default function InsightsPage() {
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
-  const results = useQuery(api.analysisResults.getByDate, { date: today });
+  const { data: results } = useSWR<AnalysisResult[]>(
+    `/api/analysis-results?date=${today}`,
+    fetcher
+  );
 
   return (
     <main className="min-h-screen">
@@ -38,7 +49,7 @@ export default function InsightsPage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {results.map((result: AnalysisResult) => (
-                <CategoryCard key={result._id} result={result} />
+                <CategoryCard key={result.id} result={result} />
               ))}
             </div>
           )}
@@ -61,14 +72,6 @@ export default function InsightsPage() {
       </div>
     </main>
   );
-}
-
-interface AnalysisResult {
-  _id: string;
-  categoryDisplay: string;
-  summary: string;
-  antiPatterns?: Array<{ description: string }>;
-  wins?: Array<{ description: string }>;
 }
 
 function CategoryCard({ result }: { result: AnalysisResult }) {

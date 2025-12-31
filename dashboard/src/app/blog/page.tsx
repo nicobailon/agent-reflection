@@ -1,11 +1,11 @@
 "use client";
 
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@convex/_generated/api";
+import useSWR, { mutate } from "swr";
+import { fetcher, patchApi } from "@/lib/api";
 import { useState } from "react";
 
 interface BlogDraft {
-  _id: string;
+  id: string;
   weekStart: string;
   weekEnd: string;
   content: string;
@@ -15,8 +15,12 @@ interface BlogDraft {
 }
 
 export default function BlogPage() {
-  const drafts = useQuery(api.blogDrafts.list, {});
-  const updateStatus = useMutation(api.blogDrafts.updateStatus);
+  const { data: drafts } = useSWR<BlogDraft[]>("/api/blog-drafts", fetcher);
+
+  const updateStatus = async (weekStart: string, status: string) => {
+    await patchApi(`/api/blog-drafts/by-week/${weekStart}`, { status });
+    mutate("/api/blog-drafts");
+  };
 
   return (
     <main className="min-h-screen">
@@ -38,11 +42,9 @@ export default function BlogPage() {
           <div className="space-y-6">
             {drafts.map((draft: BlogDraft) => (
               <DraftCard
-                key={draft._id}
+                key={draft.id}
                 draft={draft}
-                onStatusChange={(status) =>
-                  updateStatus({ weekStart: draft.weekStart, status })
-                }
+                onStatusChange={(status) => updateStatus(draft.weekStart, status)}
               />
             ))}
           </div>

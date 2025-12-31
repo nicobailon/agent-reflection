@@ -3,14 +3,16 @@
   "private": true,
   "workspaces": [
     "ingestion",
-    "dashboard"
+    "dashboard",
+    "api"
   ],
   "scripts": {
     "dev": "npm run dev --workspace=dashboard",
+    "dev:api": "npm run dev --workspace=api",
     "build": "npm run build --workspace=dashboard",
-    "ingest:github": "npm run github --workspace=ingestion",
-    "ingest:twitter": "npm run twitter --workspace=ingestion",
-    "generate:blog": "npm run blog --workspace=ingestion",
-    "convex:dev": "npx convex dev"
+    "build:api": "npm run build --workspace=api",
+    "ingest:twitter": "npm run twitter --workspace=ingestion"
+  },
+  "dependencies": {
   }
 }

@@ -21,7 +21,7 @@ export default function SettingsPage() {
             />
             <SettingRow
               label="Twitter Bookmarks"
-              description="Imported from ~/Downloads/nicopreme-tweets-*.json"
+              description="Imported from ~/data/agent-reflection/twitter/"
               status="Active"
             />
           </div>
@@ -32,7 +32,7 @@ export default function SettingsPage() {
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 space-y-3">
             <CommandRow
               label="Run CASS ingestion"
-              command="CONVEX_URL=... uv run main.py"
+              command="uv run main.py"
             />
             <CommandRow
               label="Run GitHub ingestion"
@@ -40,7 +40,7 @@ export default function SettingsPage() {
             />
             <CommandRow
               label="Run Twitter ingestion"
-              command="npm run ingest:twitter"
+              command="npm run ingest:twitter-sqlite"
             />
             <CommandRow
               label="Generate blog draft"
@@ -59,6 +59,10 @@ export default function SettingsPage() {
             <p className="text-zinc-400">
               <code className="bg-zinc-800 px-2 py-0.5 rounded">~/.config/cass/daily-report-prompt.md</code>
               <span className="text-zinc-500 ml-2">LLM prompt template</span>
+            </p>
+            <p className="text-zinc-400">
+              <code className="bg-zinc-800 px-2 py-0.5 rounded">~/data/agent-reflection/reflection.db</code>
+              <span className="text-zinc-500 ml-2">SQLite database</span>
             </p>
           </div>
         </section>

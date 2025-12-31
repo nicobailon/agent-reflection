@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import Link from "next/link";
 import "./globals.css";
-import { ConvexClientProvider } from "@/components/ConvexClientProvider";
 import { Nav } from "@/components/Nav";
 
 const geistSans = localFont({
@@ -29,15 +28,13 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-zinc-950 text-zinc-100`}>
-        <ConvexClientProvider>
-          <header className="border-b border-zinc-800 px-6 py-3 flex items-center justify-between">
-            <Link href="/" className="text-lg font-semibold tracking-tight">
-              Agent Reflection
-            </Link>
-            <Nav />
-          </header>
-          {children}
-        </ConvexClientProvider>
+        <header className="border-b border-zinc-800 px-6 py-3 flex items-center justify-between">
+          <Link href="/" className="text-lg font-semibold tracking-tight">
+            Agent Reflection
+          </Link>
+          <Nav />
+        </header>
+        {children}
       </body>
     </html>
   );

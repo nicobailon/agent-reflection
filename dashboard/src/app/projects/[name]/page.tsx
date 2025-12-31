@@ -1,35 +1,51 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
+import useSWR from "swr";
+import { fetcher } from "@/lib/api";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import Link from "next/link";
+import { use } from "react";
 
 interface Props {
-  params: { name: string };
+  params: Promise<{ name: string }>;
+}
+
+interface Project {
+  id: string;
+  name: string;
+  description?: string;
+  totalSessions: number;
+  totalCommits: number;
+  totalTimeMinutes: number;
+  firstActivity: string;
+  isPublic: number;
+  repoFullName?: string;
 }
 
 export default function ProjectDetailPage({ params }: Props) {
-  const { name } = params;
-  const project = useQuery(api.projects.getByName, { name });
+  const { name } = use(params);
+  const { data: project, error } = useSWR<Project>(
+    `/api/projects/${encodeURIComponent(name)}`,
+    fetcher
+  );
 
-  if (project === undefined) {
-    return (
-      <main className="min-h-screen">
-        <div className="max-w-4xl mx-auto px-6 py-8">
-          <div className="h-64 bg-zinc-900 rounded-lg animate-pulse" />
-        </div>
-      </main>
-    );
-  }
-
-  if (project === null) {
+  if (error) {
     return (
       <main className="min-h-screen">
         <div className="max-w-4xl mx-auto px-6 py-8">
           <div className="text-center py-12 text-zinc-500">
             Project not found: {name}
           </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (project === undefined) {
+    return (
+      <main className="min-h-screen">
+        <div className="max-w-4xl mx-auto px-6 py-8">
+          <div className="h-64 bg-zinc-900 rounded-lg animate-pulse" />
         </div>
       </main>
     );

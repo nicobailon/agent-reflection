@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
+import useSWR from "swr";
+import { fetcher } from "@/lib/api";
 import { useState } from "react";
 
 interface Activity {
@@ -9,20 +9,22 @@ interface Activity {
   type: string;
   project?: string;
   source: string;
-  isPublic: boolean;
+  isPublic: number;
 }
 
 export function ExportButtons() {
   const [exporting, setExporting] = useState(false);
 
-  const activities = useQuery(api.activities.getActivityFeed, { limit: 1000 });
+  const { data: activities } = useSWR<Activity[]>(
+    "/api/activities?limit=1000&publicOnly=true",
+    fetcher
+  );
 
   const exportJson = async () => {
     if (!activities) return;
     setExporting(true);
 
-    const publicActivities = activities.filter((a: Activity) => a.isPublic);
-    const blob = new Blob([JSON.stringify(publicActivities, null, 2)], {
+    const blob = new Blob([JSON.stringify(activities, null, 2)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
@@ -39,9 +41,8 @@ export function ExportButtons() {
     if (!activities) return;
     setExporting(true);
 
-    const publicActivities = activities.filter((a: Activity) => a.isPublic);
     const headers = ["date", "type", "project", "source"];
-    const rows = publicActivities.map((a: Activity) =>
+    const rows = activities.map((a: Activity) =>
       [a.date, a.type, a.project || "", a.source].join(",")
     );
     const csv = [headers.join(","), ...rows].join("\n");

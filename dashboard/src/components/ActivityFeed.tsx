@@ -1,15 +1,15 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
+import useSWR from "swr";
+import { fetcher } from "@/lib/api";
 import { formatDistanceToNow } from "date-fns";
 
 interface Activity {
-  _id: string;
+  id: string;
   type: string;
   timestamp: number;
   project?: string;
-  payload?: Record<string, unknown>;
+  payload?: string;
 }
 
 interface ActivityFeedProps {
@@ -19,11 +19,14 @@ interface ActivityFeedProps {
 }
 
 export function ActivityFeed({ limit = 20, projectFilter, publicOnly }: ActivityFeedProps) {
-  const activities = useQuery(api.activities.getActivityFeed, {
-    limit,
-    projectFilter,
-    publicOnly,
-  });
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (projectFilter) params.set("project", projectFilter);
+  if (publicOnly) params.set("publicOnly", "true");
+
+  const { data: activities } = useSWR<Activity[]>(
+    `/api/activities?${params}`,
+    fetcher
+  );
 
   if (activities === undefined) {
     return <ActivityFeedSkeleton count={limit} />;
@@ -40,7 +43,7 @@ export function ActivityFeed({ limit = 20, projectFilter, publicOnly }: Activity
   return (
     <div className="space-y-2">
       {activities.map((activity: Activity) => (
-        <ActivityItem key={activity._id} activity={activity} />
+        <ActivityItem key={activity.id} activity={activity} />
       ))}
     </div>
   );
@@ -48,7 +51,8 @@ export function ActivityFeed({ limit = 20, projectFilter, publicOnly }: Activity
 
 function ActivityItem({ activity }: { activity: Activity }) {
   const icon = getActivityIcon(activity.type);
-  const description = formatActivityDescription(activity);
+  const payload = activity.payload ? JSON.parse(activity.payload) : {};
+  const description = formatActivityDescription(activity.type, payload, activity.project);
 
   return (
     <div className="flex items-start gap-3 p-3 rounded-lg hover:bg-zinc-900/50 transition-colors">
@@ -99,8 +103,11 @@ function getActivityIcon(type: string): string {
   return icons[type] ?? "?";
 }
 
-function formatActivityDescription(activity: Activity): string {
-  const { type, payload, project } = activity;
+function formatActivityDescription(
+  type: string,
+  payload: Record<string, unknown>,
+  project?: string
+): string {
   switch (type) {
     case "commit":
       return `Commit: ${payload?.message ?? "No message"}`;

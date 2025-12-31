@@ -1,8 +1,16 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
+import useSWR from "swr";
+import { fetcher } from "@/lib/api";
 import { useMemo } from "react";
+
+interface DayActivity {
+  sessions: number;
+  commits: number;
+  issuesClosed: number;
+  prsMerged: number;
+  estimatedMinutes: number;
+}
 
 export function StatsCards() {
   const { startDate, endDate } = useMemo(() => {
@@ -15,21 +23,21 @@ export function StatsCards() {
     };
   }, []);
 
-  const data = useQuery(api.dayActivities.getContributionGraph, {
-    startDate,
-    endDate,
-  });
+  const { data } = useSWR<DayActivity[]>(
+    `/api/day-activities?startDate=${startDate}&endDate=${endDate}`,
+    fetcher
+  );
 
   const stats = useMemo(() => {
     if (!data) return null;
 
     const totals = data.reduce(
-      (acc: { sessions: number; commits: number; issuesClosed: number; prsMerged: number; minutes: number }, day: { sessions: number; commits: number; issuesClosed: number; prsMerged: number; estimatedMinutes: number }) => ({
-        sessions: acc.sessions + day.sessions,
-        commits: acc.commits + day.commits,
-        issuesClosed: acc.issuesClosed + day.issuesClosed,
-        prsMerged: acc.prsMerged + day.prsMerged,
-        minutes: acc.minutes + day.estimatedMinutes,
+      (acc, day) => ({
+        sessions: acc.sessions + (day.sessions || 0),
+        commits: acc.commits + (day.commits || 0),
+        issuesClosed: acc.issuesClosed + (day.issuesClosed || 0),
+        prsMerged: acc.prsMerged + (day.prsMerged || 0),
+        minutes: acc.minutes + (day.estimatedMinutes || 0),
       }),
       { sessions: 0, commits: 0, issuesClosed: 0, prsMerged: 0, minutes: 0 }
     );

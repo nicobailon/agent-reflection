@@ -1,12 +1,12 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
+import useSWR from "swr";
+import { fetcher } from "@/lib/api";
 import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 
 interface Bookmark {
-  _id: string;
+  id: string;
   postUrl: string;
   authorName: string;
   authorHandle: string;
@@ -17,17 +17,29 @@ interface Bookmark {
   extractedLinks: string[];
 }
 
+interface TopicCount {
+  topic: string;
+  count: number;
+}
+
 export default function BookmarksPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTopic, setSelectedTopic] = useState<string | undefined>();
 
-  const bookmarks = useQuery(api.bookmarks.search, {
-    query: searchQuery || undefined,
-    topic: selectedTopic,
-    limit: 50,
-  });
+  const params = new URLSearchParams();
+  if (searchQuery) params.set("query", searchQuery);
+  if (selectedTopic) params.set("topic", selectedTopic);
+  params.set("limit", "50");
 
-  const topics = useQuery(api.bookmarks.getTopics);
+  const { data: bookmarks } = useSWR<Bookmark[]>(
+    `/api/bookmarks?${params}`,
+    fetcher
+  );
+
+  const { data: topics } = useSWR<TopicCount[]>(
+    "/api/bookmarks/topics",
+    fetcher
+  );
 
   return (
     <main className="min-h-screen">
@@ -42,15 +54,13 @@ export default function BookmarksPage() {
           />
           <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
             <TopicButton
-              topic={undefined}
               label="All"
               selected={!selectedTopic}
               onClick={() => setSelectedTopic(undefined)}
             />
-            {topics?.slice(0, 6).map(({ topic }: { topic: string; count: number }) => (
+            {topics?.slice(0, 6).map(({ topic }: TopicCount) => (
               <TopicButton
                 key={topic}
-                topic={topic}
                 label={topic}
                 selected={selectedTopic === topic}
                 onClick={() => setSelectedTopic(topic)}
@@ -74,7 +84,7 @@ export default function BookmarksPage() {
         ) : (
           <div className="space-y-4">
             {bookmarks.map((bookmark: Bookmark) => (
-              <BookmarkCard key={bookmark._id} bookmark={bookmark} />
+              <BookmarkCard key={bookmark.id} bookmark={bookmark} />
             ))}
           </div>
         )}
@@ -84,12 +94,10 @@ export default function BookmarksPage() {
 }
 
 function TopicButton({
-  topic,
   label,
   selected,
   onClick,
 }: {
-  topic: string | undefined;
   label: string;
   selected: boolean;
   onClick: () => void;
@@ -109,6 +117,9 @@ function TopicButton({
 }
 
 function BookmarkCard({ bookmark }: { bookmark: Bookmark }) {
+  const topics = bookmark.topics || [];
+  const extractedRepos = bookmark.extractedRepos || [];
+
   return (
     <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
       <div className="flex items-start justify-between mb-2">
@@ -121,9 +132,9 @@ function BookmarkCard({ bookmark }: { bookmark: Bookmark }) {
         </time>
       </div>
       <p className="text-sm text-zinc-300 whitespace-pre-wrap">{bookmark.tweetText}</p>
-      {bookmark.topics.length > 0 && (
+      {topics.length > 0 && (
         <div className="flex gap-2 mt-3">
-          {bookmark.topics.map((topic: string) => (
+          {topics.map((topic: string) => (
             <span
               key={topic}
               className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded"
@@ -133,11 +144,11 @@ function BookmarkCard({ bookmark }: { bookmark: Bookmark }) {
           ))}
         </div>
       )}
-      {bookmark.extractedRepos.length > 0 && (
+      {extractedRepos.length > 0 && (
         <div className="mt-3 pt-3 border-t border-zinc-800">
           <p className="text-xs text-zinc-500 mb-1">Mentioned repos:</p>
           <div className="flex gap-2 flex-wrap">
-            {bookmark.extractedRepos.map((repo: string) => (
+            {extractedRepos.map((repo: string) => (
               <a
                 key={repo}
                 href={`https://github.com/${repo}`}
