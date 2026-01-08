@@ -3,6 +3,10 @@
   "type": "module",
   "scripts": {
     "twitter": "npx tsx scripts/twitter-ingest-sqlite.ts",
+    "stars:sync": "npx tsx scripts/github-stars-sync.ts",
+    "stars:readme": "npx tsx scripts/github-readme-fetch.ts",
+    "stars:embed": "npx tsx scripts/github-stars-embed.ts",
+    "videos": "npx tsx scripts/cli/saved-videos.ts",
     "cli:search": "npx tsx scripts/cli/search.ts",
     "cli:semantic": "npx tsx scripts/cli/semantic.ts",
     "cli:similar": "npx tsx scripts/cli/similar.ts",

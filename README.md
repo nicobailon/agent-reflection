@@ -1,85 +1,124 @@
 # Agent Reflection
 
-Developer activity tracking and insight system. Aggregates data from coding agent sessions (CASS), GitHub, local documentation, and Twitter bookmarks into a real-time dashboard.
+Personal knowledge system with semantic search. Aggregates and indexes content from Twitter bookmarks/likes, GitHub starred repos, YouTube saved videos, and coding sessions.
+
+## Features
+
+- **Semantic Search** - Find content by meaning using embeddings (text-embedding-3-small)
+- **Full-Text Search** - Fast keyword search via SQLite FTS5
+- **Multiple Sources** - Twitter, GitHub stars, YouTube, coding sessions
+- **CLI Tools** - Query your knowledge base from the terminal
+- **REST API** - Programmatic access for integrations
 
 ## Quick Start
 
-1. **Install dependencies**:
-   ```bash
-   npm install
-   ```
+```bash
+# Install dependencies
+cd ingestion && npm install
 
-2. **Set up Convex**:
-   ```bash
-   npx convex init
-   npx convex dev
-   ```
+# Set up environment
+export OPENAI_API_KEY="..."  # or OPENROUTER_API_KEY
 
-3. **Configure environment**:
-   ```bash
-   # Copy your Convex URL from the dashboard
-   export CONVEX_URL="https://your-deployment.convex.cloud"
-   ```
+# Run API server
+cd api && npm run dev
+```
 
-4. **Run ingestion**:
-   ```bash
-   # CASS + Docs (Python)
-   uv run main.py
-   
-   # GitHub
-   npm run ingest:github
-   
-   # Twitter bookmarks
-   npm run ingest:twitter
-   ```
+## CLI Tools
 
-5. **Start dashboard**:
-   ```bash
-   npm run dev
-   ```
+### Twitter (`tweets`)
+```bash
+tweets search "machine learning"     # Full-text search
+tweets semantic "AI safety"          # Semantic search  
+tweets stats                         # Collection stats
+```
+
+### GitHub Stars (`stars`)
+```bash
+stars search "react state"           # Full-text search
+stars semantic "database orm"        # Semantic search
+stars stats                          # Collection stats
+stars topics                         # Browse by topic
+```
+
+### YouTube Saved Videos (`videos`)
+```bash
+videos search "karpathy"             # Full-text search
+videos semantic "transformers"       # Semantic search
+videos ask "explain attention"       # Semantic search → Gemini analysis
+videos stats                         # Collection stats
+```
+
+The `videos ask` command finds matching videos via semantic search, then queries them using `surf gemini --youtube`.
+
+## API Endpoints
+
+```
+GET  /api/tweets              # List bookmarked tweets
+POST /api/tweets/semantic     # Semantic search tweets
+GET  /api/tweets/search       # Full-text search tweets
+
+GET  /api/stars               # List starred repos
+POST /api/stars/semantic      # Semantic search repos
+GET  /api/stars/search        # Full-text search repos
+
+GET  /api/videos              # List saved videos
+POST /api/videos/semantic     # Semantic search videos
+GET  /api/videos/search       # Full-text search videos
+
+GET  /api/stats               # Global statistics
+```
+
+## Data Sources
+
+| Source | Description | Sync |
+|--------|-------------|------|
+| Twitter Bookmarks | Saved tweets via bookmark-sync | Daily |
+| Twitter Likes | Liked tweets via likes-sync | Daily |
+| GitHub Stars | Starred repos + READMEs | Daily |
+| YouTube Liked | Liked videos via youtube-sync | Daily |
+| YouTube Watch Later | Watch Later playlist | Daily |
 
 ## Project Structure
 
 ```
 agent-reflection/
-├── main.py               # CASS + Docs ingestion (Python)
-├── convex/               # Convex backend
-│   ├── schema.ts         # Database schema
-│   ├── activities.ts     # Activity queries/mutations
-│   ├── projects.ts       # Project management
-│   └── ...
-├── dashboard/            # Next.js dashboard
-│   ├── src/app/          # Pages
-│   └── src/components/   # React components
-└── ingestion/            # TypeScript ingestion scripts
-    └── scripts/
-        ├── github-ingest.ts
-        └── twitter-ingest.ts
+├── api/                      # Hono REST API server
+│   └── src/server.ts
+├── ingestion/
+│   └── scripts/
+│       ├── cli/              # CLI tools (tweets, stars, videos)
+│       ├── lib/              # Shared utilities (embeddings, db)
+│       ├── twitter-ingest-sqlite.ts
+│       ├── github-stars-sync.ts
+│       ├── github-stars-embed.ts
+│       └── youtube-ingest-sqlite.ts
+├── main.py                   # CASS session ingestion
+└── data/                     # SQLite databases (gitignored)
 ```
-
-## Data Sources
-
-| Source | Format | Frequency | Script |
-|--------|--------|-----------|--------|
-| CASS Sessions | JSONL | Daily | `main.py` |
-| GitHub Activity | REST API | Daily | `github-ingest.ts` |
-| Documentation | Markdown files | Daily | `main.py` |
-| Twitter Bookmarks | JSON export | Weekly | `twitter-ingest.ts` |
 
 ## Configuration
 
-Config files are stored outside the repo:
-- `~/.config/cass/daily-report.toml` - Main config
-- `~/.config/cass/daily-report-prompt.md` - LLM prompt
+```bash
+# API endpoint (for CLI tools calling from other machines)
+export AGENT_REFLECTION_API="http://localhost:3001"
+
+# Embedding provider (one required)
+export OPENAI_API_KEY="..."
+export OPENROUTER_API_KEY="..."  # Alternative
+```
 
 ## Development
 
 ```bash
-# Start Convex dev server (terminal 1)
-npx convex dev
+# Start API server
+cd api && npm run dev
 
-# Start Next.js dev server (terminal 2)
-npm run dev
+# Run ingestion scripts
+cd ingestion
+npm run twitter           # Ingest Twitter bookmarks/likes
+npm run stars:sync        # Sync GitHub stars
+npm run stars:embed       # Generate embeddings for stars
+npm run videos            # See saved-videos CLI
 ```
 
 ## License

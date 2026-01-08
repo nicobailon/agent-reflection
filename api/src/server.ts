@@ -605,6 +605,580 @@ app.get("/api/stats", (c) => {
   return c.json(stats);
 });
 
+function toStarClient(row: Record<string, unknown>): Record<string, unknown> {
+  if (!row) return row;
+  return toClient(row, ["all_languages", "topics", "inferred_topics"]);
+}
+
+app.get("/api/stars", (c) => {
+  const limit = Number(c.req.query("limit")) || 50;
+  const lang = c.req.query("lang");
+  const minStars = Number(c.req.query("minStars")) || 0;
+  const license = c.req.query("license");
+  const archived = c.req.query("archived") === "true";
+
+  let sql = "SELECT * FROM starred_repos WHERE 1=1";
+  const params: (string | number)[] = [];
+
+  if (lang) {
+    sql += " AND primary_language = ?";
+    params.push(lang);
+  }
+  if (minStars > 0) {
+    sql += " AND stargazers_count >= ?";
+    params.push(minStars);
+  }
+  if (license) {
+    sql += " AND license = ?";
+    params.push(license);
+  }
+  if (archived) {
+    sql += " AND is_archived = 1";
+  }
+
+  sql += " ORDER BY starred_at DESC LIMIT ?";
+  params.push(limit);
+
+  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  return c.json(rows.map(toStarClient));
+});
+
+app.get("/api/stars/search", (c) => {
+  const q = c.req.query("q") || "";
+  const limit = Number(c.req.query("limit")) || 20;
+  const lang = c.req.query("lang");
+  const minStars = Number(c.req.query("minStars")) || 0;
+
+  if (!q) {
+    const rows = db
+      .prepare("SELECT * FROM starred_repos ORDER BY starred_at DESC LIMIT ?")
+      .all(limit) as Record<string, unknown>[];
+    return c.json(rows.map(toStarClient));
+  }
+
+  let sql = `
+    SELECT sr.*, bm25(starred_repos_fts) as score
+    FROM starred_repos_fts fts
+    JOIN starred_repos sr ON fts.rowid = sr.rowid
+    WHERE starred_repos_fts MATCH ?
+  `;
+  const params: (string | number)[] = [q];
+
+  if (lang) {
+    sql += " AND sr.primary_language = ?";
+    params.push(lang);
+  }
+  if (minStars > 0) {
+    sql += " AND sr.stargazers_count >= ?";
+    params.push(minStars);
+  }
+
+  sql += " ORDER BY score LIMIT ?";
+  params.push(limit);
+
+  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  return c.json(rows.map(toStarClient));
+});
+
+app.post("/api/stars/semantic", async (c) => {
+  const { query, lang, minStars, limit = 10 } = (await c.req.json()) as {
+    query: string;
+    lang?: string;
+    minStars?: number;
+    limit?: number;
+  };
+
+  const embedding = await generateEmbedding(query);
+  const queryVec = new Float32Array(embedding);
+
+  const vecResults = db
+    .prepare(
+      `
+    SELECT rowid, distance 
+    FROM star_embeddings 
+    WHERE embedding MATCH ?
+    ORDER BY distance 
+    LIMIT ?
+  `
+    )
+    .all(queryVec, limit * 2) as Array<{ rowid: number; distance: number }>;
+
+  if (vecResults.length === 0) {
+    return c.json([]);
+  }
+
+  const rowids = vecResults.map((r) => r.rowid);
+  const distanceMap = new Map(vecResults.map((r) => [r.rowid, r.distance]));
+
+  const placeholders = rowids.map(() => "?").join(",");
+  let sql = `
+    SELECT sr.*, m.vec_rowid
+    FROM starred_repos sr
+    JOIN star_embedding_map m ON sr.id = m.repo_id
+    WHERE m.vec_rowid IN (${placeholders})
+  `;
+  const params: (string | number)[] = [...rowids];
+
+  if (lang) {
+    sql += " AND sr.primary_language = ?";
+    params.push(lang);
+  }
+  if (minStars) {
+    sql += " AND sr.stargazers_count >= ?";
+    params.push(minStars);
+  }
+
+  const rows = db.prepare(sql).all(...params) as Array<Record<string, unknown> & { vec_rowid: number }>;
+
+  const results = rows
+    .map((r) => ({ ...r, distance: distanceMap.get(r.vec_rowid) }))
+    .sort((a, b) => (a.distance || 0) - (b.distance || 0))
+    .slice(0, limit);
+
+  return c.json(results.map((r) => ({ ...toStarClient(r), _score: 1 - (r.distance || 0) })));
+});
+
+app.post("/api/stars/similar", async (c) => {
+  const { fullName, limit = 10 } = (await c.req.json()) as { fullName: string; limit?: number };
+
+  const mapping = db
+    .prepare(
+      `
+    SELECT m.vec_rowid
+    FROM starred_repos sr
+    JOIN star_embedding_map m ON sr.id = m.repo_id
+    WHERE sr.full_name = ?
+  `
+    )
+    .get(fullName) as { vec_rowid: number } | undefined;
+
+  if (!mapping) {
+    return c.json([]);
+  }
+
+  const embeddingRow = db
+    .prepare(`SELECT embedding FROM star_embeddings WHERE rowid = ?`)
+    .get(mapping.vec_rowid) as { embedding: Float32Array } | undefined;
+
+  if (!embeddingRow) {
+    return c.json([]);
+  }
+
+  const vecResults = db
+    .prepare(
+      `
+    SELECT rowid, distance 
+    FROM star_embeddings 
+    WHERE embedding MATCH ?
+    ORDER BY distance 
+    LIMIT ?
+  `
+    )
+    .all(embeddingRow.embedding, limit + 1) as Array<{ rowid: number; distance: number }>;
+
+  const rowids = vecResults
+    .filter((r) => r.rowid !== mapping.vec_rowid)
+    .map((r) => r.rowid)
+    .slice(0, limit);
+  const distanceMap = new Map(vecResults.map((r) => [r.rowid, r.distance]));
+
+  if (rowids.length === 0) {
+    return c.json([]);
+  }
+
+  const placeholders = rowids.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `
+    SELECT sr.*, m.vec_rowid
+    FROM starred_repos sr
+    JOIN star_embedding_map m ON sr.id = m.repo_id
+    WHERE m.vec_rowid IN (${placeholders})
+  `
+    )
+    .all(...rowids) as Array<Record<string, unknown> & { vec_rowid: number }>;
+
+  const results = rows
+    .map((r) => ({ ...r, distance: distanceMap.get(r.vec_rowid) }))
+    .sort((a, b) => (a.distance || 0) - (b.distance || 0));
+
+  return c.json(results.map((r) => ({ ...toStarClient(r), _score: 1 - (r.distance || 0) })));
+});
+
+app.get("/api/stars/stats", (c) => {
+  const total = (db.prepare("SELECT COUNT(*) as count FROM starred_repos").get() as { count: number })?.count || 0;
+
+  const hasEmbeddings = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='star_embeddings'").get();
+  const withEmbeddings = hasEmbeddings
+    ? (db.prepare("SELECT COUNT(*) as count FROM star_embeddings").get() as { count: number })?.count || 0
+    : 0;
+
+  const withReadme = (
+    db.prepare("SELECT COUNT(*) as count FROM starred_repos WHERE readme_content IS NOT NULL").get() as { count: number }
+  )?.count || 0;
+
+  const archived = (db.prepare("SELECT COUNT(*) as count FROM starred_repos WHERE is_archived = 1").get() as { count: number })?.count || 0;
+
+  const byLanguage = db
+    .prepare(
+      `
+    SELECT primary_language as language, COUNT(*) as count 
+    FROM starred_repos 
+    WHERE primary_language IS NOT NULL
+    GROUP BY primary_language 
+    ORDER BY count DESC 
+    LIMIT 20
+  `
+    )
+    .all() as Array<{ language: string; count: number }>;
+
+  const byLicense = db
+    .prepare(
+      `
+    SELECT license, COUNT(*) as count 
+    FROM starred_repos 
+    WHERE license IS NOT NULL
+    GROUP BY license 
+    ORDER BY count DESC
+    LIMIT 10
+  `
+    )
+    .all() as Array<{ license: string; count: number }>;
+
+  return c.json({ total, withEmbeddings, withReadme, archived, byLanguage, byLicense });
+});
+
+app.get("/api/stars/topics", (c) => {
+  const limit = Number(c.req.query("limit")) || 20;
+  const rows = db.prepare("SELECT topics FROM starred_repos WHERE topics IS NOT NULL").all() as Array<{ topics: string }>;
+
+  const topicCounts = new Map<string, number>();
+  for (const row of rows) {
+    const topics = JSON.parse(row.topics || "[]") as string[];
+    for (const topic of topics) {
+      topicCounts.set(topic, (topicCounts.get(topic) || 0) + 1);
+    }
+  }
+
+  const result = Array.from(topicCounts.entries())
+    .map(([topic, count]) => ({ topic, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+
+  return c.json(result);
+});
+
+app.get("/api/stars/:fullName", (c) => {
+  const fullName = decodeURIComponent(c.req.param("fullName"));
+  const repo = db.prepare("SELECT * FROM starred_repos WHERE full_name = ?").get(fullName) as Record<string, unknown>;
+  if (!repo) {
+    return c.json({ error: "not found" }, 404);
+  }
+  return c.json(toStarClient(repo));
+});
+
+function toVideoClient(row: Record<string, unknown>): Record<string, unknown> {
+  if (!row) return row;
+  const result = toClient(row, ["tags"]);
+  return result;
+}
+
+app.get("/api/videos", (c) => {
+  const limit = Number(c.req.query("limit")) || 50;
+  const source = c.req.query("source");
+  const channel = c.req.query("channel");
+
+  let sql = "SELECT * FROM saved_videos WHERE 1=1";
+  const params: (string | number)[] = [];
+
+  if (source) {
+    sql += " AND source = ?";
+    params.push(source);
+  }
+  if (channel) {
+    sql += " AND LOWER(channel_name) = LOWER(?)";
+    params.push(channel);
+  }
+
+  sql += " ORDER BY saved_at DESC LIMIT ?";
+  params.push(limit);
+
+  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  return c.json(rows.map(toVideoClient));
+});
+
+app.get("/api/videos/search", (c) => {
+  const q = c.req.query("q") || "";
+  const limit = Number(c.req.query("limit")) || 20;
+  const source = c.req.query("source");
+  const channel = c.req.query("channel");
+
+  if (!q) {
+    const rows = db
+      .prepare("SELECT * FROM saved_videos ORDER BY saved_at DESC LIMIT ?")
+      .all(limit) as Record<string, unknown>[];
+    return c.json(rows.map(toVideoClient));
+  }
+
+  let sql = `
+    SELECT sv.*, bm25(saved_videos_fts) as score
+    FROM saved_videos_fts fts
+    JOIN saved_videos sv ON fts.rowid = sv.id
+    WHERE saved_videos_fts MATCH ?
+  `;
+  const params: (string | number)[] = [q];
+
+  if (source) {
+    sql += " AND sv.source = ?";
+    params.push(source);
+  }
+  if (channel) {
+    sql += " AND LOWER(sv.channel_name) = LOWER(?)";
+    params.push(channel);
+  }
+
+  sql += " ORDER BY score LIMIT ?";
+  params.push(limit);
+
+  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  return c.json(rows.map(toVideoClient));
+});
+
+app.post("/api/videos/semantic", async (c) => {
+  const { query, source, channel, limit = 10 } = (await c.req.json()) as {
+    query: string;
+    source?: string;
+    channel?: string;
+    limit?: number;
+  };
+
+  const embedding = await generateEmbedding(query);
+  const queryVec = new Float32Array(embedding);
+
+  const vecResults = db
+    .prepare(
+      `
+    SELECT rowid, distance 
+    FROM saved_video_embeddings 
+    WHERE embedding MATCH ?
+    ORDER BY distance 
+    LIMIT ?
+  `
+    )
+    .all(queryVec, limit * 2) as Array<{ rowid: number; distance: number }>;
+
+  if (vecResults.length === 0) {
+    return c.json([]);
+  }
+
+  const rowids = vecResults.map((r) => r.rowid);
+  const distanceMap = new Map(vecResults.map((r) => [r.rowid, r.distance]));
+
+  const placeholders = rowids.map(() => "?").join(",");
+  let sql = `
+    SELECT sv.*, m.vec_rowid
+    FROM saved_videos sv
+    JOIN saved_video_embedding_map m ON sv.video_id = m.video_id
+    WHERE m.vec_rowid IN (${placeholders})
+  `;
+  const params: (string | number)[] = [...rowids];
+
+  if (source) {
+    sql += " AND sv.source = ?";
+    params.push(source);
+  }
+  if (channel) {
+    sql += " AND LOWER(sv.channel_name) = LOWER(?)";
+    params.push(channel);
+  }
+
+  const rows = db.prepare(sql).all(...params) as Array<Record<string, unknown> & { vec_rowid: number }>;
+
+  const results = rows
+    .map((r) => ({ ...r, distance: distanceMap.get(r.vec_rowid) }))
+    .sort((a, b) => (a.distance || 0) - (b.distance || 0))
+    .slice(0, limit);
+
+  return c.json(results.map((r) => ({ ...toVideoClient(r), _score: 1 - (r.distance || 0) })));
+});
+
+app.get("/api/videos/stats", (c) => {
+  const hasTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='saved_videos'").get();
+  if (!hasTable) {
+    return c.json({ total: 0, withEmbeddings: 0, withTranscripts: 0, bySource: [], topChannels: [] });
+  }
+
+  const total = (db.prepare("SELECT COUNT(*) as count FROM saved_videos").get() as { count: number })?.count || 0;
+
+  const hasEmbeddings = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='saved_video_embeddings'").get();
+  const withEmbeddings = hasEmbeddings
+    ? (db.prepare("SELECT COUNT(*) as count FROM saved_video_embeddings").get() as { count: number })?.count || 0
+    : 0;
+
+  const withTranscripts = (
+    db.prepare("SELECT COUNT(*) as count FROM saved_videos WHERE transcript IS NOT NULL").get() as { count: number }
+  )?.count || 0;
+
+  const bySource = db
+    .prepare("SELECT source, COUNT(*) as count FROM saved_videos GROUP BY source")
+    .all() as Array<{ source: string; count: number }>;
+
+  const topChannels = db
+    .prepare(
+      `
+    SELECT channel_name as channel, COUNT(*) as count 
+    FROM saved_videos 
+    WHERE channel_name IS NOT NULL
+    GROUP BY channel_name 
+    ORDER BY count DESC 
+    LIMIT 20
+  `
+    )
+    .all() as Array<{ channel: string; count: number }>;
+
+  return c.json({ total, withEmbeddings, withTranscripts, bySource, topChannels });
+});
+
+app.get("/api/videos/channels", (c) => {
+  const limit = Number(c.req.query("limit")) || 20;
+
+  const hasTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='saved_videos'").get();
+  if (!hasTable) {
+    return c.json([]);
+  }
+
+  const channels = db
+    .prepare(
+      `
+    SELECT channel_name as channel, COUNT(*) as count 
+    FROM saved_videos 
+    WHERE channel_name IS NOT NULL
+    GROUP BY channel_name 
+    ORDER BY count DESC 
+    LIMIT ?
+  `
+    )
+    .all(limit) as Array<{ channel: string; count: number }>;
+
+  return c.json(channels);
+});
+
+app.get("/api/videos/:videoId", (c) => {
+  const videoId = decodeURIComponent(c.req.param("videoId"));
+  const video = db.prepare("SELECT * FROM saved_videos WHERE video_id = ?").get(videoId) as Record<string, unknown>;
+  if (!video) {
+    return c.json({ error: "not found" }, 404);
+  }
+  return c.json(toVideoClient(video));
+});
+
+app.post("/api/videos/:videoId/transcript", async (c) => {
+  const videoId = decodeURIComponent(c.req.param("videoId"));
+
+  const video = db
+    .prepare("SELECT video_id, duration_seconds, transcript, title, description FROM saved_videos WHERE video_id = ?")
+    .get(videoId) as { video_id: string; duration_seconds: number | null; transcript: string | null; title: string; description: string | null } | undefined;
+
+  if (!video) {
+    return c.json({ error: "Video not found in database" }, 404);
+  }
+
+  if (video.transcript) {
+    return c.json({ cached: true, length: video.transcript.length });
+  }
+
+  const { execSync } = await import("child_process");
+  const { readFileSync, unlinkSync, existsSync, readdirSync } = await import("fs");
+  const { join } = await import("path");
+  const { tmpdir, homedir } = await import("os");
+
+  const COOKIES_PATH = `${homedir()}/~/.config/youtube-sync/cookies.txt`;
+
+  const parseVTT = (content: string): { startSeconds: number; endSeconds: number; text: string }[] => {
+    const segments: { startSeconds: number; endSeconds: number; text: string }[] = [];
+    const lines = content.split("\n");
+    let currentStart = 0;
+    let currentEnd = 0;
+    let currentText = "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      const timeMatch = trimmed.match(/(\d{2}):(\d{2}):(\d{2})[\.,](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[\.,](\d{3})/);
+      if (timeMatch) {
+        if (currentText) {
+          segments.push({ startSeconds: currentStart, endSeconds: currentEnd, text: currentText.trim() });
+        }
+        currentStart = parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseInt(timeMatch[3]);
+        currentEnd = parseInt(timeMatch[5]) * 3600 + parseInt(timeMatch[6]) * 60 + parseInt(timeMatch[7]);
+        currentText = "";
+        continue;
+      }
+      if (trimmed && !trimmed.startsWith("WEBVTT") && !trimmed.startsWith("Kind:") && !trimmed.startsWith("Language:") && !trimmed.match(/^\d+$/)) {
+        const cleaned = trimmed.replace(/<[^>]+>/g, "").trim();
+        if (cleaned) currentText += (currentText ? " " : "") + cleaned;
+      }
+    }
+    if (currentText) segments.push({ startSeconds: currentStart, endSeconds: currentEnd, text: currentText.trim() });
+    return segments;
+  };
+
+  const tempDir = tmpdir();
+  const outputTemplate = join(tempDir, `yt-${videoId}`);
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+
+  try {
+    const cookiesArg = existsSync(COOKIES_PATH) ? `--cookies "${COOKIES_PATH}"` : "";
+    execSync(
+      `yt-dlp ${cookiesArg} --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o "${outputTemplate}" "${url}"`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+    );
+  } catch {
+    return c.json({ error: "Failed to fetch subtitles (may not be available)" }, 500);
+  }
+
+  const subFiles = readdirSync(tempDir).filter((f) => f.startsWith(`yt-${videoId}`) && f.endsWith(".vtt"));
+  if (subFiles.length === 0) {
+    return c.json({ error: "No English subtitles available" }, 404);
+  }
+
+  const subPath = join(tempDir, subFiles[0]);
+  const vttContent = readFileSync(subPath, "utf-8");
+  unlinkSync(subPath);
+
+  const rawSegments = parseVTT(vttContent);
+  if (rawSegments.length === 0) {
+    return c.json({ error: "Could not parse subtitles" }, 500);
+  }
+
+  const fullTranscript = rawSegments.map((s) => s.text).join(" ");
+
+  db.prepare(`
+    UPDATE saved_videos 
+    SET transcript = ?, transcript_fetched_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE video_id = ?
+  `).run(fullTranscript, videoId);
+
+  const embeddingText = `${video.title || ""}\n\n${video.description || ""}\n\n${fullTranscript}`.trim().slice(0, 8000);
+  const embedding = await generateEmbedding(embeddingText);
+
+  const existingMap = db.prepare("SELECT vec_rowid FROM saved_video_embedding_map WHERE video_id = ?").get(videoId) as { vec_rowid: number } | undefined;
+
+  if (existingMap) {
+    db.prepare("UPDATE saved_video_embeddings SET embedding = ? WHERE rowid = ?").run(
+      new Float32Array(embedding),
+      existingMap.vec_rowid
+    );
+  } else {
+    const result = db.prepare("INSERT INTO saved_video_embeddings (embedding) VALUES (?)").run(new Float32Array(embedding));
+    db.prepare("INSERT INTO saved_video_embedding_map (video_id, vec_rowid) VALUES (?, ?)").run(
+      videoId,
+      Number(result.lastInsertRowid)
+    );
+  }
+
+  return c.json({ success: true, length: fullTranscript.length });
+});
+
 const port = Number(process.env.PORT) || 3001;
 serve({ fetch: app.fetch, port });
 console.log(`API server running on http://localhost:${port}`);

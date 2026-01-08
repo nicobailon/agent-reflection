@@ -146,3 +146,141 @@ CREATE TABLE daily_summaries (
   blog_draft TEXT,
   blog_draft_status TEXT
 );
+
+CREATE TABLE starred_repos (
+  id TEXT PRIMARY KEY,
+  github_id INTEGER UNIQUE NOT NULL,
+  full_name TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  readme_content TEXT,
+  readme_truncated INTEGER DEFAULT 0,
+  primary_language TEXT,
+  all_languages TEXT,
+  topics TEXT,
+  inferred_topics TEXT,
+  license TEXT,
+  stargazers_count INTEGER DEFAULT 0,
+  forks_count INTEGER DEFAULT 0,
+  open_issues_count INTEGER DEFAULT 0,
+  starred_at INTEGER,
+  created_at INTEGER,
+  updated_at INTEGER,
+  pushed_at INTEGER,
+  is_archived INTEGER DEFAULT 0,
+  is_fork INTEGER DEFAULT 0,
+  is_template INTEGER DEFAULT 0,
+  has_readme INTEGER DEFAULT 1,
+  imported_at INTEGER,
+  last_synced_at INTEGER,
+  readme_fetched_at INTEGER
+);
+
+CREATE INDEX idx_stars_full_name ON starred_repos(full_name);
+CREATE INDEX idx_stars_owner ON starred_repos(owner);
+CREATE INDEX idx_stars_language ON starred_repos(primary_language);
+CREATE INDEX idx_stars_starred_at ON starred_repos(starred_at);
+CREATE INDEX idx_stars_stargazers ON starred_repos(stargazers_count);
+
+CREATE VIRTUAL TABLE star_embeddings USING vec0(
+  embedding float[1536] distance_metric=cosine
+);
+
+CREATE TABLE star_embedding_map (
+  repo_id TEXT PRIMARY KEY,
+  vec_rowid INTEGER NOT NULL
+);
+CREATE INDEX idx_star_embedding_map_rowid ON star_embedding_map(vec_rowid);
+
+CREATE VIRTUAL TABLE starred_repos_fts USING fts5(
+  full_name,
+  description,
+  readme_content,
+  topics,
+  content='starred_repos',
+  content_rowid='rowid'
+);
+
+CREATE TRIGGER starred_repos_ai AFTER INSERT ON starred_repos BEGIN
+  INSERT INTO starred_repos_fts(rowid, full_name, description, readme_content, topics)
+  VALUES (NEW.rowid, NEW.full_name, NEW.description, NEW.readme_content, NEW.topics);
+END;
+
+CREATE TRIGGER starred_repos_ad AFTER DELETE ON starred_repos BEGIN
+  INSERT INTO starred_repos_fts(starred_repos_fts, rowid, full_name, description, readme_content, topics)
+  VALUES ('delete', OLD.rowid, OLD.full_name, OLD.description, OLD.readme_content, OLD.topics);
+END;
+
+CREATE TRIGGER starred_repos_au AFTER UPDATE ON starred_repos BEGIN
+  INSERT INTO starred_repos_fts(starred_repos_fts, rowid, full_name, description, readme_content, topics)
+  VALUES ('delete', OLD.rowid, OLD.full_name, OLD.description, OLD.readme_content, OLD.topics);
+  INSERT INTO starred_repos_fts(rowid, full_name, description, readme_content, topics)
+  VALUES (NEW.rowid, NEW.full_name, NEW.description, NEW.readme_content, NEW.topics);
+END;
+
+-- YouTube Saved Videos
+CREATE TABLE IF NOT EXISTS saved_videos (
+  id INTEGER PRIMARY KEY,
+  video_id TEXT UNIQUE NOT NULL,
+  url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  channel_name TEXT,
+  channel_id TEXT,
+  description TEXT,
+  duration_seconds INTEGER,
+  published_at TEXT,
+  thumbnail_url TEXT,
+  tags TEXT,
+  view_count INTEGER,
+  source TEXT NOT NULL CHECK(source IN ('liked', 'watch_later', 'both')),
+  saved_at TEXT NOT NULL,
+  transcript TEXT,
+  transcript_fetched_at TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_videos_source ON saved_videos(source);
+CREATE INDEX IF NOT EXISTS idx_saved_videos_channel ON saved_videos(channel_name);
+CREATE INDEX IF NOT EXISTS idx_saved_videos_saved_at ON saved_videos(saved_at);
+
+CREATE TABLE IF NOT EXISTS saved_video_embedding_map (
+  video_id TEXT PRIMARY KEY,
+  vec_rowid INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_saved_video_embedding_map_rowid ON saved_video_embedding_map(vec_rowid);
+
+CREATE TABLE IF NOT EXISTS saved_video_segments (
+  id INTEGER PRIMARY KEY,
+  video_id TEXT NOT NULL,
+  segment_index INTEGER NOT NULL,
+  start_seconds INTEGER NOT NULL,
+  end_seconds INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  embedding BLOB,
+  FOREIGN KEY (video_id) REFERENCES saved_videos(video_id)
+);
+CREATE INDEX IF NOT EXISTS idx_saved_video_segments_video ON saved_video_segments(video_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS saved_videos_fts USING fts5(
+  video_id, title, channel_name, description, tags, transcript,
+  content='saved_videos', content_rowid='id'
+);
+
+CREATE TRIGGER IF NOT EXISTS saved_videos_ai AFTER INSERT ON saved_videos BEGIN
+  INSERT INTO saved_videos_fts(rowid, video_id, title, channel_name, description, tags, transcript)
+  VALUES (NEW.id, NEW.video_id, NEW.title, NEW.channel_name, NEW.description, NEW.tags, NEW.transcript);
+END;
+
+CREATE TRIGGER IF NOT EXISTS saved_videos_ad AFTER DELETE ON saved_videos BEGIN
+  INSERT INTO saved_videos_fts(saved_videos_fts, rowid, video_id, title, channel_name, description, tags, transcript)
+  VALUES ('delete', OLD.id, OLD.video_id, OLD.title, OLD.channel_name, OLD.description, OLD.tags, OLD.transcript);
+END;
+
+CREATE TRIGGER IF NOT EXISTS saved_videos_au AFTER UPDATE ON saved_videos BEGIN
+  INSERT INTO saved_videos_fts(saved_videos_fts, rowid, video_id, title, channel_name, description, tags, transcript)
+  VALUES ('delete', OLD.id, OLD.video_id, OLD.title, OLD.channel_name, OLD.description, OLD.tags, OLD.transcript);
+  INSERT INTO saved_videos_fts(rowid, video_id, title, channel_name, description, tags, transcript)
+  VALUES (NEW.id, NEW.video_id, NEW.title, NEW.channel_name, NEW.description, NEW.tags, NEW.transcript);
+END;
